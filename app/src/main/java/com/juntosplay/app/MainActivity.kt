@@ -3,6 +3,7 @@ package com.juntosplay.app
 import android.app.Activity
 import android.os.Bundle
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -102,11 +103,12 @@ class MainActivity : Activity() {
         }
 
         space(18)
-        text("Controles de prueba", 20f, true, accent)
-        text("Envía eventos a la otra pantalla. El control real de aplicaciones externas requiere compatibilidad de cada reproductor.", 14f, false, muted)
-        button("PAUSA") { roomClient?.sendPlayback("pause") ?: toast("Conecta y entra en una sala.") }
-        button("REPRODUCIR") { roomClient?.sendPlayback("play") ?: toast("Conecta y entra en una sala.") }
-        button("AVANZAR 30 SEGUNDOS") { roomClient?.sendPlayback("seek", 30_000L) ?: toast("Conecta y entra en una sala.") }
+        text("Ver juntos", 20f, true, accent)
+        text("Elige un canal, película o episodio de tu IPTV. Se abre aquí y en el otro televisor usando una sola conexión con el proveedor. Ambos televisores necesitan Tailscale.", 14f, false, muted)
+        button("Compartir desde mi IPTV") {
+            if (roomClient == null) toast("Conecta primero con el servidor y entra en una sala.")
+            else startActivity(Intent(this, ShareActivity::class.java))
+        }
         space(16)
         text("La aplicación recuerda el servidor y la sala en este televisor. Si el servidor pierde la sala tras reiniciarse, habrá que crear o vincular otra.", 14f, false, muted)
     }
@@ -133,6 +135,7 @@ class MainActivity : Activity() {
                 }
             }
         )
+        RoomSession.client = roomClient
         roomClient?.connect(url)
     }
 
@@ -152,9 +155,21 @@ class MainActivity : Activity() {
                 statusText.text = "Estado: sala vinculada"
                 toast("Te uniste a la sala.")
             }
-            "peer_joined" -> toast("El otro televisor se conectó.")
+            "peer_joined" -> {
+                toast("El otro televisor se conectó.")
+                // Si ya se está compartiendo algo, el que entra tarde lo recibe ahora.
+                RoomSession.currentShare?.let { roomClient?.sendRelayShare(it.url, it.kind, it.title) }
+            }
             "peer_left" -> toast("El otro televisor se desconectó.")
-            "playback" -> toast("Control recibido: ${msg.optString("action")}")
+            "relay_share" -> {
+                val url = msg.optString("url")
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    startActivity(
+                        PlayerActivity.intent(this, url, msg.optString("kind", "vod"), msg.optString("title"), host = false)
+                    )
+                }
+            }
+            "playback", "relay_stop" -> RoomSession.playbackListener?.invoke(msg)
             "error" -> {
                 val message = msg.optString("message", "Error del servidor")
                 if (restoringRoom) {
@@ -205,6 +220,8 @@ class MainActivity : Activity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     override fun onDestroy() {
+        if (RoomSession.client === roomClient) RoomSession.client = null
+        Thread { RoomSession.stopRelay() }.start()
         roomClient?.close()
         super.onDestroy()
     }

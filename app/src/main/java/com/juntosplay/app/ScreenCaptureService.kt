@@ -44,7 +44,13 @@ class ScreenCaptureService : Service() {
         }
 
         createNotificationChannel()
-        val notification = Notification.Builder(this, CHANNEL_ID)
+        val notificationBuilder = if (Build.VERSION.SDK_INT >= 26) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        val notification = notificationBuilder
             .setContentTitle("TogetherPlay")
             .setContentText("Captura de pantalla activa")
             .setSmallIcon(android.R.drawable.ic_menu_view)
@@ -102,7 +108,10 @@ class ScreenCaptureService : Service() {
         projectionCallback = null
         projection?.stop()
         projection = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE) else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
         stopSelf()
     }
 

@@ -7,6 +7,6 @@ object NetworkMode {
     const val AUTO = "auto"
     /** Misma red Wi-Fi o de cable (pruebas en casa). */
     const val WIFI = "wifi"
-    /** Entre casas distintas, por Tailscale. */
+    /** Entre casas distintas, por Tailscale (la app de Tailscale o el integrado de TogetherPlay). */
     const val TAILSCALE = "tailscale"
 }

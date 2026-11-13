@@ -34,6 +34,7 @@ class ExternalPlayActivity : Activity() {
         card.addView(buttons, Ui.matchWrap())
         val width = minOf(Ui.dp(this, 480), resources.displayMetrics.widthPixels - Ui.dp(this, 32))
         root.addView(card, FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
+        Ui.applySystemBarsPadding(root)
         setContentView(root)
         start()
     }

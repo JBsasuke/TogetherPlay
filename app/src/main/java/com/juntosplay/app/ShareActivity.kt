@@ -93,6 +93,7 @@ class ShareActivity : Activity() {
         if (subtitle.isNotBlank()) titles.addView(Ui.label(this, subtitle, 13f, Ui.muted))
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header, Ui.matchWrap(bottomMargin = dp(20)))
+        Ui.applySystemBarsPadding(root)
         setContentView(root)
         return root
     }

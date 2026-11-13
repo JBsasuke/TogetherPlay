@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var batteryText: TextView
     private lateinit var batteryButton: TextView
     private lateinit var cacheText: TextView
+    private lateinit var tailscaleCard: TailscaleCard
     private var restoringRoom = false
     private val roomClient get() = RoomSession.client
 
@@ -70,6 +71,13 @@ class MainActivity : Activity() {
         RoomSession.statusListener = { status -> setStatus(status) }
         updateScreenButton()
         updateDeviceCard()
+        TailnetBridge.autoStart(this)
+        tailscaleCard.onResume()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        tailscaleCard.onPause()
     }
 
     private fun dp(value: Int) = Ui.dp(this, value)
@@ -83,6 +91,8 @@ class MainActivity : Activity() {
             setPadding(side, dp(22), side, dp(30))
         }
         scroll.addView(page)
+        scroll.clipToPadding = false
+        Ui.applySystemBarsPadding(scroll)
         setContentView(scroll)
 
         // Cabecera: logo, nombre y estado de la conexión.
@@ -171,7 +181,7 @@ class MainActivity : Activity() {
         val modeHelp = Ui.label(this, "", 13f, Ui.hint)
         fun describeMode(mode: String) = when (mode) {
             NetworkMode.WIFI -> "Los dos equipos en el mismo Wi-Fi o cable. Ideal para probar en casa."
-            NetworkMode.TAILSCALE -> "Entre casas distintas. Los dos equipos con Tailscale conectado."
+            NetworkMode.TAILSCALE -> "Entre casas distintas. Los dos equipos vinculados a Tailscale (aquí abajo, en «Este equipo») o con la app de Tailscale."
             else -> "Usa Tailscale si está conectado; si no, el Wi-Fi de la casa."
         }
         val savedMode = prefs.getString(NetworkMode.PREF, NetworkMode.AUTO) ?: NetworkMode.AUTO
@@ -228,6 +238,9 @@ class MainActivity : Activity() {
             },
             if (wide) LinearLayout.LayoutParams(Ui.dp(this, 480), wrap).apply { bottomMargin = dp(18) } else Ui.matchWrap(bottomMargin = dp(18))
         )
+
+        tailscaleCard = TailscaleCard(this, wide)
+        deviceCard.addView(tailscaleCard.view, Ui.matchWrap(bottomMargin = dp(18)))
 
         cacheText = Ui.label(this, "", 14f, Ui.muted)
         deviceCard.addView(cacheText, Ui.matchWrap(bottomMargin = dp(10)))

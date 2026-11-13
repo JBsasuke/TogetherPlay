@@ -182,6 +182,11 @@ class ScreenViewActivity : Activity() {
         }, "tp-screen-speaker").apply { start() }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) Ui.hideSystemBars(this)
+    }
+
     override fun onDestroy() {
         if (RoomSession.screenStopListener != null) RoomSession.screenStopListener = null
         RoomSession.screenSignalListener = null

@@ -63,6 +63,7 @@ object RoomSession {
     /** Conecta (o reconecta) con [url] y lo guarda como servidor de este equipo. */
     fun connect(context: Context, url: String) {
         app = context.applicationContext
+        TailnetBridge.autoStart(context)
         prefs(context).edit().putString("server_url", url).apply()
         client?.close()
         val c = RoomClient(
@@ -98,6 +99,7 @@ object RoomSession {
     /** Conecta con el servidor guardado si todavía no hay conexión. Devuelve false si no hay sala guardada. */
     fun ensureConnected(context: Context): Boolean {
         app = context.applicationContext
+        TailnetBridge.autoStart(context)
         val prefs = prefs(context)
         if (client == null) {
             val url = prefs.getString("server_url", DEFAULT_SERVER) ?: DEFAULT_SERVER

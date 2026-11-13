@@ -49,6 +49,8 @@ class PlayerActivity : Activity() {
     private var isHost = false
     private var kind = "vod"
     private var url = ""
+    /** Dirección tal como llegó del otro equipo (url puede ser la versión por Tailscale integrado). */
+    private var sourceUrl = ""
     /** Mientras se aplica una orden remota, los cambios locales no se reenvían. */
     private var ignoreLocalUntil = 0L
     private val handler = Handler(Looper.getMainLooper())
@@ -121,8 +123,9 @@ class PlayerActivity : Activity() {
         val newUrl = intent.getStringExtra(EXTRA_URL)
         if (newUrl.isNullOrBlank()) { finish(); return }
         // Al reconectarse la sala llega el mismo aviso otra vez: si ya se está viendo, no se reinicia.
-        if (newUrl == url && player != null && errorBox.visibility != View.VISIBLE) return
-        url = newUrl
+        if (newUrl == sourceUrl && player != null && errorBox.visibility != View.VISIBLE) return
+        sourceUrl = newUrl
+        url = TailnetBridge.rewriteForPlayback(newUrl)
         isHost = intent.getBooleanExtra(EXTRA_HOST, false)
         kind = intent.getStringExtra(EXTRA_KIND) ?: "vod"
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
@@ -430,6 +433,11 @@ class PlayerActivity : Activity() {
         // Si se fue a otra app, se pausa solo aquí; el otro equipo sigue viendo.
         ignoreLocal(1500)
         player?.playWhenReady = false
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) Ui.hideSystemBars(this)
     }
 
     override fun onDestroy() {

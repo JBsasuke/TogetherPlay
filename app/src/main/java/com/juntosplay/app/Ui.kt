@@ -1,6 +1,11 @@
 package com.juntosplay.app
 
+import android.app.Activity
 import android.content.Context
+import android.os.Build
+import android.view.View
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
@@ -160,6 +165,52 @@ object Ui {
             })
         }
         return row
+    }
+
+    /**
+     * Android 15 dibuja las apps detrás de la barra de notificaciones y la de navegación:
+     * se añade su alto como margen interior para que nada quede tapado ni cortado.
+     */
+    fun applySystemBarsPadding(view: View) {
+        val left = view.paddingLeft
+        val top = view.paddingTop
+        val right = view.paddingRight
+        val bottom = view.paddingBottom
+        view.setOnApplyWindowInsetsListener { v, insets ->
+            if (Build.VERSION.SDK_INT >= 30) {
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                val ime = insets.getInsets(WindowInsets.Type.ime())
+                v.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + maxOf(bars.bottom, ime.bottom))
+            } else {
+                @Suppress("DEPRECATION")
+                v.setPadding(
+                    left + insets.systemWindowInsetLeft, top + insets.systemWindowInsetTop,
+                    right + insets.systemWindowInsetRight, bottom + insets.systemWindowInsetBottom
+                )
+            }
+            insets
+        }
+        if (view.isAttachedToWindow) view.requestApplyInsets()
+        else view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { v.requestApplyInsets() }
+            override fun onViewDetachedFromWindow(v: View) {}
+        })
+    }
+
+    /** Pantalla completa para el video: se ocultan las barras (vuelven deslizando desde el borde). */
+    fun hideSystemBars(activity: Activity) {
+        val window = activity.window
+        if (Build.VERSION.SDK_INT >= 30) {
+            window.insetsController?.let {
+                it.hide(WindowInsets.Type.systemBars())
+                it.systemBarsBehavior = WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            window.decorView.systemUiVisibility = (View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or View.SYSTEM_UI_FLAG_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN)
+        }
     }
 
     fun matchWrap(bottomMargin: Int = 0, topMargin: Int = 0): LinearLayout.LayoutParams =

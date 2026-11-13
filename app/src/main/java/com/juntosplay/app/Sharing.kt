@@ -13,12 +13,14 @@ object Sharing {
     /** Dirección por la que el otro equipo llega a este, según la red elegida. */
     fun relayHost(context: Context): String {
         val prefs = RoomSession.prefs(context)
+        // Tailscale: la app de Tailscale si está conectada; si no, el integrado de TogetherPlay.
+        val tailscale = StreamRelay.tailscaleAddress() ?: TailnetBridge.ip()
         return when (prefs.getString(NetworkMode.PREF, NetworkMode.AUTO)) {
-            NetworkMode.TAILSCALE -> StreamRelay.tailscaleAddress()
-                ?: throw IOException("no encuentro Tailscale; ábrelo y conéctalo en este equipo")
+            NetworkMode.TAILSCALE -> tailscale
+                ?: throw IOException("Tailscale no está conectado. Vincula este equipo en «Este equipo → Tailscale» o abre la app de Tailscale")
             NetworkMode.WIFI -> StreamRelay.localAddress()
                 ?: throw IOException("no encuentro la red Wi-Fi o de cable de este equipo")
-            else -> StreamRelay.tailscaleAddress() ?: StreamRelay.localAddress()
+            else -> tailscale ?: StreamRelay.localAddress()
                 ?: throw IOException("no encuentro ni Tailscale ni la red Wi-Fi de este equipo")
         }
     }
@@ -37,6 +39,7 @@ object Sharing {
         val host = relayHost(context)
         val relay = RoomSession.relay(context)
         relay.start()
+        TailnetBridge.serveRelay()
         val agent = headers.entries.firstOrNull { it.key.equals("User-Agent", true) }?.value
             ?: UserAgents.current(RoomSession.prefs(context))
         val format = relay.share(upstreamUrl, live, agent, headers.filterKeys { !it.equals("User-Agent", true) })
@@ -55,6 +58,7 @@ object Sharing {
         val type = mimeType ?: context.contentResolver.getType(uri) ?: "video/*"
         val relay = RoomSession.relay(context)
         relay.start()
+        TailnetBridge.serveRelay()
         relay.shareLocal(channel, size, type) {
             try { stream.close() } catch (_: IOException) {}
             try { pfd.close() } catch (_: IOException) {}

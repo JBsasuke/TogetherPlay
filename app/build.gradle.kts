@@ -28,9 +28,11 @@ android {
     val fixedKey = keystorePath?.let { path ->
         signingConfigs.create("fixed") {
             storeFile = rootProject.file(path)
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: localKeys?.getProperty("storePassword")
-            keyAlias = System.getenv("KEY_ALIAS") ?: localKeys?.getProperty("keyAlias") ?: "togetherplay"
-            keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")
+            fun env(name: String) = System.getenv(name)?.takeIf { it.isNotBlank() }
+            val password = env("KEYSTORE_PASSWORD") ?: env("KEYSTORE_PASSWORD_FALLBACK")
+            storePassword = password ?: localKeys?.getProperty("storePassword")
+            keyAlias = env("KEY_ALIAS") ?: localKeys?.getProperty("keyAlias") ?: "togetherplay"
+            keyPassword = env("KEY_PASSWORD") ?: password
                 ?: localKeys?.getProperty("keyPassword") ?: localKeys?.getProperty("storePassword")
         }
     }

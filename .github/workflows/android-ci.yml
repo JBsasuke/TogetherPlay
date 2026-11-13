@@ -45,13 +45,22 @@ jobs:
             echo "KEYSTORE_FILE=$RUNNER_TEMP/togetherplay.jks" >> "$GITHUB_ENV"
             echo "Firma fija activada"
           else
-            echo "Sin secreto KEYSTORE_BASE64: se usa la firma de depuración temporal"
+            # Sin secretos: llave temporal (igual que antes, cambia en cada compilación).
+            keytool -genkeypair -keystore "$RUNNER_TEMP/temp.jks" -storetype PKCS12 -alias togetherplay \
+              -keyalg RSA -keysize 2048 -validity 30 -storepass temporal123 -keypass temporal123 -dname "CN=temporal"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/temp.jks" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD_FALLBACK=temporal123" >> "$GITHUB_ENV"
+            echo "Sin secreto KEYSTORE_BASE64: llave temporal (habrá que desinstalar al actualizar)"
           fi
       - name: Assemble debug APK
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
         run: gradle --no-daemon :app:assembleDebug
+      - name: Show signing certificate
+        run: |
+          SIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
+          "$SIGNER" verify --print-certs app/build/outputs/apk/debug/*.apk | grep -E "DN|SHA-256"
       - uses: actions/upload-artifact@v4
         with:
           name: TogetherPlay-debug-apk

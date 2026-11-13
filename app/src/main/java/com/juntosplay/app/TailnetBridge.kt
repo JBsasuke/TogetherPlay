@@ -43,6 +43,9 @@ object TailnetBridge {
             return m.invoke(null, *args)
         } catch (e: InvocationTargetException) {
             throw IOException(e.targetException?.message ?: "error de Tailscale", e.targetException)
+        } catch (e: Throwable) {
+            // Errores graves al cargar la parte nativa: se informan en vez de cerrar la app.
+            throw IOException("${e.javaClass.simpleName}: ${e.message ?: "error al cargar Tailscale"}", e)
         }
     }
 
@@ -51,10 +54,12 @@ object TailnetBridge {
     fun start(context: Context, authKey: String = "") {
         if (started) return
         val app = context.applicationContext
+        // gomobile necesita el contexto de Android (carpeta temporal, etc.).
+        try { Class.forName("go.Seq").getMethod("setContext", Context::class.java).invoke(null, app) } catch (_: Throwable) {}
         try { call("setCrashFile", TogetherPlayApp.nativeCrashFile(app).absolutePath) } catch (_: Exception) {}
         updateInterfaces()
         val dir = File(app.filesDir, "tailscale").absolutePath
-        call("start", dir, hostname(), authKey.trim())
+        call("start", dir, hostname(), authKey.trim(), app.cacheDir.absolutePath)
         started = true
         RoomSession.prefs(app).edit().putBoolean(PREF_ENABLED, true).apply()
         watchNetwork(app)

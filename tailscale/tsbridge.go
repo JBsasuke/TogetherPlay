@@ -93,7 +93,7 @@ func SetCrashFile(path string) {
 }
 
 // Start arranca el nodo. Si no está vinculado, Status() devolverá un enlace de inicio de sesión.
-func Start(dir, hostname, authKey string) (err error) {
+func Start(dir, hostname, authKey, tmpDir string) (err error) {
 	defer recoverInto(&err)
 	mu.Lock()
 	defer mu.Unlock()
@@ -102,6 +102,11 @@ func Start(dir, hostname, authKey string) (err error) {
 	}
 	// Sin envío de registros a los servidores de Tailscale.
 	os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
+	// En Android no hay HOME ni TMPDIR válidos: algunas partes de Tailscale los usan.
+	os.Setenv("HOME", dir)
+	if tmpDir != "" {
+		os.Setenv("TMPDIR", tmpDir)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}

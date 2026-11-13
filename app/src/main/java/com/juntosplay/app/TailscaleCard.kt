@@ -73,7 +73,7 @@ class TailscaleCard(private val activity: Activity, wide: Boolean) {
         thread {
             try {
                 TailnetBridge.start(activity, key)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 activity.runOnUiThread { status.text = "No se pudo iniciar Tailscale: ${e.message}" }
             }
         }

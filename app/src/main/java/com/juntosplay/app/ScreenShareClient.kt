@@ -33,6 +33,7 @@ class ScreenShareClient(
     private val onStatus: (String) -> Unit
 ) {
     private val egl = EglBase.create()
+    val eglContext: EglBase.Context get() = egl.eglBaseContext
     private val factory: PeerConnectionFactory
     private var peer: PeerConnection? = null
     private var localCapturer: ProjectionVideoCapturer? = null
@@ -285,8 +286,12 @@ class ScreenShareClient(
                 track.play()
                 speaker = track
             }
-            if (Build.VERSION.SDK_INT >= 23) track.write(data, 0, data.size, SystemAudioTrack.WRITE_NON_BLOCKING)
-            else @Suppress("DEPRECATION") track.write(data, 0, data.size)
+            if (Build.VERSION.SDK_INT >= 23) {
+                track.write(data, 0, data.size, SystemAudioTrack.WRITE_NON_BLOCKING)
+            } else {
+                @Suppress("DEPRECATION")
+                track.write(data, 0, data.size)
+            }
         } catch (_: Exception) {
             onStatus("No se pudo reproducir el audio recibido.")
         }

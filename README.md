@@ -61,15 +61,14 @@ versión; con el anterior hay que crear o unirse a una sala nueva).
 
 ## Servidor de salas
 La versión de GitHub no trae servidor: en la app se escribe la dirección `wss://...` del
-servidor propio (y su clave, si tiene). El servidor está en `server/` (Node.js 20+) y se
-puede desplegar gratis en Render. Si en Render se define `ROOM_PASSWORD`, solo entran las
-apps con esa clave.
+servidor propio. El servidor está en `server/` (Node.js 20+) y se puede desplegar gratis
+en Render.
 
 ## Compilar en Android Studio
 1. Baja `tsbridge.aar` (Tailscale integrado) de la última versión en **Releases** y cópialo
    en `app/libs/`. Sin él, la app compila igual pero sin Tailscale integrado.
 2. Para que tu compilación traiga tu servidor: copia `togetherplay.properties.example` como
-   `togetherplay.properties` y pon tu dirección y clave. Ese archivo no se sube a GitHub.
+   `togetherplay.properties` y pon tu dirección. Ese archivo no se sube a GitHub.
 3. Para firmar con tu llave fija: pon `togetherplay.jks` y un `keystore.properties` en la
    carpeta del proyecto (tampoco se suben).
 4. Abre la carpeta en Android Studio, sincroniza Gradle y ejecuta `app`.

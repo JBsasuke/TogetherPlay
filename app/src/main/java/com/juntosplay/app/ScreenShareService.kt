@@ -141,7 +141,7 @@ class ScreenShareService : Service() {
         @Suppress("DEPRECATION")
         (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(dm)
         val long = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1)
-        val maxLong = if (quality == QUALITY_720) 1280f else 1920f
+        val maxLong = when (quality) { QUALITY_720 -> 1280f; QUALITY_4K -> 3840f; else -> 1920f }
         val scale = minOf(1f, maxLong / long)
         return ((dm.widthPixels * scale).toInt() / 2 * 2) to ((dm.heightPixels * scale).toInt() / 2 * 2)
     }
@@ -175,8 +175,8 @@ class ScreenShareService : Service() {
             val params = sender.parameters
             params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
             for (e in params.encodings) {
-                e.maxBitrateBps = if (quality == QUALITY_720) 4_000_000 else 8_000_000
-                e.minBitrateBps = if (quality == QUALITY_720) 1_200_000 else 2_500_000
+                e.maxBitrateBps = when (quality) { QUALITY_720 -> 4_000_000; QUALITY_4K -> 25_000_000; else -> 8_000_000 }
+                e.minBitrateBps = when (quality) { QUALITY_720 -> 1_200_000; QUALITY_4K -> 5_000_000; else -> 2_500_000 }
                 e.maxFramerate = 30
             }
             sender.parameters = params
@@ -292,6 +292,7 @@ class ScreenShareService : Service() {
         const val PREF_QUALITY = "screen_quality"
         const val QUALITY_720 = "720"
         const val QUALITY_1080 = "1080"
+        const val QUALITY_4K = "2160"
         private const val CHANNEL = "togetherplay_screen"
         private const val NOTIFICATION_ID = 7402
     }

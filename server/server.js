@@ -3,8 +3,7 @@ const { WebSocketServer } = require("ws");
 const crypto = require("crypto");
 
 const PORT = Number(process.env.PORT || 8080);
-// Clave opcional: si ROOM_PASSWORD está puesta en Render, solo entran las apps que la tengan.
-const ROOM_PASSWORD = process.env.ROOM_PASSWORD || "";
+
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
@@ -13,21 +12,7 @@ const server = http.createServer((req, res) => {
   res.writeHead(404);
   res.end("Not found");
 });
-function keyOk(req) {
-  if (!ROOM_PASSWORD) return true;
-  try {
-    const key = new URL(req.url, "http://x").searchParams.get("key") || "";
-    const a = Buffer.from(key);
-    const b = Buffer.from(ROOM_PASSWORD);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
-const wss = new WebSocketServer({
-  server,
-  verifyClient: (info, done) => (keyOk(info.req) ? done(true) : done(false, 401, "Clave incorrecta")),
-});
+const wss = new WebSocketServer({ server });
 const rooms = new Map();
 const clients = new Map();
 

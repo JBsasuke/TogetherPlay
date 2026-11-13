@@ -13,8 +13,8 @@ android {
         applicationId = "com.juntosplay.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        versionCode = 7
+        versionName = "0.6.1"
         // Solo ARM (TV y teléfonos): el APK pesa bastante menos.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
@@ -29,7 +29,6 @@ android {
     fun quoted(v: String?) = "\"" + (v ?: "").replace("\\", "\\\\").replace("\"", "\\\"") + "\""
     defaultConfig {
         buildConfigField("String", "DEFAULT_SERVER", quoted(localServer?.getProperty("server.url")?.trim()))
-        buildConfigField("String", "DEFAULT_SERVER_KEY", quoted(localServer?.getProperty("server.key")?.trim()))
     }
     buildFeatures { buildConfig = true }
 

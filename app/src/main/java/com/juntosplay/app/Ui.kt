@@ -154,7 +154,15 @@ object Ui {
                 textSize = 14f
                 gravity = Gravity.CENTER
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setPadding(dp(c, 14), dp(c, 9), dp(c, 14), dp(c, 9))
+                setPadding(dp(c, 10), dp(c, 9), dp(c, 10), dp(c, 9))
+                // Todas del mismo alto: una sola línea, y el texto se achica si no cabe.
+                maxLines = 1
+                isSingleLine = true
+                if (!vertical && Build.VERSION.SDK_INT >= 26) {
+                    setAutoSizeTextTypeUniformWithConfiguration(10, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
+                } else {
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                }
                 isFocusable = true
                 isClickable = true
             }

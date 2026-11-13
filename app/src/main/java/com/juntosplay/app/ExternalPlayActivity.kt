@@ -45,8 +45,21 @@ class ExternalPlayActivity : Activity() {
         start()
     }
 
+    /** El video llega como dirección (Abrir con / reproductor externo) o compartido (Compartir). */
+    private fun videoUri(intent: Intent?): Uri? {
+        intent ?: return null
+        intent.data?.let { return it }
+        if (intent.action != Intent.ACTION_SEND) return null
+        val stream = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        if (stream != null) return stream
+        // Un enlace compartido como texto: se toma la primera dirección http(s).
+        val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return null
+        return Regex("""https?://\S+""").find(text)?.value?.let { Uri.parse(it) }
+    }
+
     private fun start() {
-        val uri = intent?.data
+        val uri = videoUri(intent)
         if (uri == null) {
             showError("La otra app no envió ningún video.")
             return

@@ -26,7 +26,6 @@ class MainActivity : Activity() {
     private val prefs by lazy { RoomSession.prefs(this) }
 
     private lateinit var serverInput: EditText
-    private lateinit var keyInput: EditText
     private lateinit var statusText: TextView
     private lateinit var statusDot: View
     private lateinit var roomText: TextView
@@ -135,12 +134,7 @@ class MainActivity : Activity() {
         serverCard.addView(Ui.sectionTitle(this, "Servidor"))
         serverCard.addView(Ui.label(this, "Dirección del servidor de salas", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(10)))
         serverInput = Ui.input(this, "wss://tu-servidor.onrender.com")
-        serverCard.addView(serverInput, Ui.matchWrap(bottomMargin = dp(10)))
-        keyInput = Ui.input(this, "Clave del servidor (si tiene)").apply {
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
-            setText(prefs.getString("server_key", RoomSession.DEFAULT_SERVER_KEY))
-        }
-        serverCard.addView(keyInput, Ui.matchWrap(bottomMargin = dp(14)))
+        serverCard.addView(serverInput, Ui.matchWrap(bottomMargin = dp(14)))
         val connectButton = Ui.button(this, "Guardar y conectar") { connectServer() }
         serverCard.addView(connectButton, Ui.matchWrap())
 
@@ -246,10 +240,22 @@ class MainActivity : Activity() {
         deviceCard.addView(Ui.label(this, "Calidad al compartir pantalla", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(8)))
         val quality = prefs.getString(ScreenShareService.PREF_QUALITY, ScreenShareService.QUALITY_1080) ?: ScreenShareService.QUALITY_1080
         deviceCard.addView(
-            Ui.chipGroup(this, listOf(ScreenShareService.QUALITY_720 to "720p · menos datos", ScreenShareService.QUALITY_1080 to "1080p · más nítido"), quality) {
+            Ui.chipGroup(
+                this,
+                listOf(
+                    ScreenShareService.QUALITY_720 to "720p",
+                    ScreenShareService.QUALITY_1080 to "1080p",
+                    ScreenShareService.QUALITY_4K to "4K"
+                ),
+                quality
+            ) {
                 prefs.edit().putString(ScreenShareService.PREF_QUALITY, it).apply()
             },
-            if (wide) LinearLayout.LayoutParams(Ui.dp(this, 480), wrap).apply { bottomMargin = dp(18) } else Ui.matchWrap(bottomMargin = dp(18))
+            if (wide) LinearLayout.LayoutParams(Ui.dp(this, 420), wrap).apply { bottomMargin = dp(6) } else Ui.matchWrap(bottomMargin = dp(6))
+        )
+        deviceCard.addView(
+            Ui.label(this, "720p gasta menos datos. 4K necesita una subida rápida (20–35 Mbps) y un equipo potente; si no, se verá a saltos.", 13f, Ui.hint),
+            Ui.matchWrap(bottomMargin = dp(18))
         )
 
         tailscaleCard = TailscaleCard(this, wide)
@@ -299,7 +305,6 @@ class MainActivity : Activity() {
             toast("La dirección debe comenzar con wss:// o ws://")
             return
         }
-        prefs.edit().putString("server_key", keyInput.text.toString().trim()).apply()
         setStatus("Conectando…")
         RoomSession.connect(this, url)
     }

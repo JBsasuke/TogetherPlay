@@ -21,7 +21,6 @@ object RoomSession {
     const val PREFS = "togetherplay_settings"
     /** Servidor de salas de esta compilación (vacío en la versión pública: cada quien pone el suyo). */
     val DEFAULT_SERVER: String = BuildConfig.DEFAULT_SERVER
-    val DEFAULT_SERVER_KEY: String = BuildConfig.DEFAULT_SERVER_KEY
 
     private val main = Handler(Looper.getMainLooper())
     private var app: Context? = null
@@ -84,7 +83,7 @@ object RoomSession {
             }
         )
         client = c
-        c.connect(url, prefs(context).getString("server_key", DEFAULT_SERVER_KEY).orEmpty())
+        c.connect(url)
         SessionService.start(context)
     }
 

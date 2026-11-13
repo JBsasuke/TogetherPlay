@@ -36,7 +36,7 @@ class ShareActivity : Activity() {
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .addInterceptor { chain ->
-            chain.proceed(chain.request().newBuilder().header("User-Agent", StreamRelay.USER_AGENT).build())
+            chain.proceed(chain.request().newBuilder().header("User-Agent", UserAgents.current(prefs)).build())
         }
         .build()
 
@@ -111,6 +111,13 @@ class ShareActivity : Activity() {
         val server = field("Servidor, p. ej. http://proveedor.com:8080", prefs.getString("xtream_server", "").orEmpty())
         val user = field("Usuario", prefs.getString("xtream_user", "").orEmpty())
         val pass = field("Contraseña", prefs.getString("xtream_pass", "").orEmpty(), password = true)
+        card.addView(Ui.label(this, "Identificarse ante el proveedor como", 14f, Ui.muted), Ui.matchWrap(topMargin = dp(4), bottomMargin = dp(8)))
+        var agentKey = prefs.getString(UserAgents.PREF, UserAgents.VLC) ?: UserAgents.VLC
+        card.addView(Ui.chipGroup(this, UserAgents.options, agentKey) { agentKey = it }, Ui.matchWrap(bottomMargin = dp(6)))
+        card.addView(
+            Ui.label(this, "Si las películas o algunos canales no abren y en TiviMate sí, prueba otra opción.", 13f, Ui.hint),
+            Ui.matchWrap(bottomMargin = dp(14))
+        )
         val save = Ui.button(this, "Guardar") {
             var address = server.text.toString().trim()
             if (address.isNotEmpty() && !address.startsWith("http://") && !address.startsWith("https://")) {
@@ -123,6 +130,7 @@ class ShareActivity : Activity() {
                     .putString("xtream_server", address)
                     .putString("xtream_user", user.text.toString().trim())
                     .putString("xtream_pass", pass.text.toString())
+                    .putString(UserAgents.PREF, agentKey)
                     .apply()
                 backStack.clear()
                 current = null
@@ -174,6 +182,7 @@ class ShareActivity : Activity() {
             tile("Películas", "Catálogo bajo demanda") { browseCategories("vod") },
             tile("Series", "Temporadas y episodios") { browseCategories("series") }
         )
+        val agentName = UserAgents.options.firstOrNull { it.first == prefs.getString(UserAgents.PREF, UserAgents.VLC) }?.second ?: "VLC"
         val row = LinearLayout(this).apply {
             orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
             // Sitio para que la tarjeta enfocada crezca sin recortarse.
@@ -194,7 +203,7 @@ class ShareActivity : Activity() {
         root.addView(row, Ui.matchWrap(bottomMargin = dp(18)))
         val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
         root.addView(
-            Ui.button(this, "Cambiar cuenta IPTV", Ui.Style.GHOST) { go { showAccountForm() } },
+            Ui.button(this, "Cuenta IPTV · se identifica como $agentName", Ui.Style.GHOST) { go { showAccountForm() } },
             LinearLayout.LayoutParams(wrap, wrap)
         )
         tiles[0].post { tiles[0].requestFocus() }
@@ -341,7 +350,8 @@ class ShareActivity : Activity() {
                 }
                 val relay = RoomSession.relay(appContext)
                 relay.start()
-                if (kind == "live") relay.shareLive(upstreamUrl) else relay.shareVod(upstreamUrl)
+                val agent = UserAgents.current(prefs)
+                if (kind == "live") relay.shareLive(upstreamUrl, agent) else relay.shareVod(upstreamUrl, agent)
                 val shared = RoomSession.Share(relay.urlFor(host), kind, title)
                 val localUrl = relay.urlFor("127.0.0.1")
                 runOnUiThread {

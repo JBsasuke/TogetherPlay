@@ -88,12 +88,12 @@ class StreamRelay(
     }
 
     /** Comparte un canal en vivo (URL .ts del proveedor). */
-    fun shareLive(upstreamUrl: String) = replaceSource(LiveSource(upstreamUrl, userAgent, log))
+    fun shareLive(upstreamUrl: String, agent: String = userAgent) = replaceSource(LiveSource(upstreamUrl, agent, log))
 
     /** Comparte un episodio o película (archivo .mkv/.mp4 del proveedor). */
-    fun shareVod(upstreamUrl: String) {
+    fun shareVod(upstreamUrl: String, agent: String = userAgent) {
         cacheDir.mkdirs()
-        replaceSource(VodSource(upstreamUrl, userAgent, cacheDir, log))
+        replaceSource(VodSource(upstreamUrl, agent, cacheDir, log))
     }
 
     /** Deja de compartir y libera la conexión con el proveedor. */
@@ -117,6 +117,17 @@ class StreamRelay(
                     out.write(simpleResponse(405, "Method Not Allowed")); return
                 }
                 val src = source
+                // Diagnóstico: qué respondió el proveedor (sin credenciales).
+                if (req.path.substringBefore('?') == "/$token/info") {
+                    val body = (src?.info() ?: "{}").toByteArray(Charsets.UTF_8)
+                    out.write(head("200 OK", listOf(
+                        "Content-Type" to "application/json; charset=utf-8",
+                        "Content-Length" to body.size.toString(),
+                        "Cache-Control" to "no-store"
+                    )))
+                    out.write(body)
+                    return
+                }
                 if (req.path.substringBefore('?') != path || src == null) {
                     out.write(simpleResponse(404, "Not Found")); return
                 }
@@ -174,6 +185,8 @@ internal class Request(val method: String, val path: String, val headers: Map<St
 
 internal interface Source : Closeable {
     fun serve(req: Request, out: OutputStream)
+    /** JSON con lo que respondió el proveedor la última vez, o null si aún no hay nada. */
+    fun info(): String?
 }
 
 private fun readLine(input: InputStream, limit: Int): String? {
@@ -221,7 +234,7 @@ private fun relayError(reason: String): ByteArray {
 // Conexión con el proveedor
 // ---------------------------------------------------------------------------
 
-internal class Upstream(val conn: HttpURLConnection, val input: InputStream) : Closeable {
+internal class Upstream(val conn: HttpURLConnection, val input: InputStream, val finalUrl: URL) : Closeable {
     override fun close() {
         // disconnect() primero: cerrar el stream antes intentaría leer el resto de la respuesta.
         conn.disconnect()
@@ -258,9 +271,62 @@ internal fun openUpstream(url: String, userAgent: String, rangeStart: Long?): Up
                 }
             )
         }
-        return Upstream(c, c.inputStream)
+        return Upstream(c, c.inputStream, current)
     }
     throw IOException("Demasiadas redirecciones")
+}
+
+/** Lo que respondió el proveedor al abrir un contenido, para detectar si no es video. */
+internal class UpstreamProbe(
+    private val status: Int,
+    private val contentType: String?,
+    private val length: Long,
+    private val host: String,
+    private val head: ByteArray
+) {
+    /** Motivo legible si lo recibido claramente no es un video; null si parece video. */
+    fun notVideoReason(): String? {
+        if (head.isEmpty()) return "el proveedor no envió datos (respuesta vacía)"
+        val text = String(head, 0, minOf(head.size, 512), Charsets.ISO_8859_1).trimStart()
+        if (text.startsWith("#EXTM3U")) {
+            return "el proveedor envía este contenido como lista HLS (m3u8), que todavía no está soportada"
+        }
+        val sample = head.take(minOf(head.size, 256))
+        val printable = sample.all { b -> val c = b.toInt() and 0xff; c == 9 || c == 10 || c == 13 || c in 32..126 }
+        val ct = contentType?.lowercase().orEmpty()
+        if (ct.startsWith("text/") || ct.contains("json") || ct.contains("html") || (printable && sample.size >= 8)) {
+            val snippet = text.replace(Regex("\\s+"), " ").take(90)
+            return "el proveedor envió texto en lugar de video: «$snippet»"
+        }
+        return null
+    }
+
+    fun json(): String {
+        fun q(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        val ascii = head.take(64).joinToString("") { b ->
+            val c = b.toInt() and 0xff
+            if (c in 32..126) c.toChar().toString() else "."
+        }
+        val hex = head.take(16).joinToString(" ") { "%02x".format(it) }
+        return "{" +
+            "\"status\":$status," +
+            "\"contentType\":${q(contentType ?: "")}," +
+            "\"length\":$length," +
+            "\"host\":${q(host)}," +
+            "\"startAscii\":${q(ascii)}," +
+            "\"startHex\":${q(hex)}" +
+            "}"
+    }
+
+    companion object {
+        fun of(up: Upstream, buf: ByteArray, n: Int) = UpstreamProbe(
+            up.conn.responseCode,
+            up.conn.contentType,
+            up.conn.contentLengthLong,
+            up.finalUrl.host ?: "",
+            buf.copyOf(maxOf(n, 0).coerceAtMost(buf.size))
+        )
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +345,9 @@ internal class LiveSource(
     @Volatile private var closed = false
     /** Motivo por el que el proveedor no entregó el canal. */
     @Volatile private var failure: String? = null
+    @Volatile private var probe: UpstreamProbe? = null
+
+    override fun info(): String? = probe?.json()
 
     override fun serve(req: Request, out: OutputStream) {
         val headers = head("200 OK", listOf("Content-Type" to "video/mp2t", "Cache-Control" to "no-store"))
@@ -328,12 +397,27 @@ internal class LiveSource(
                 if (closed || subscribers.isEmpty()) { pump = null; return }
             }
             var gotData = false
+            var fatal = false
             try {
                 val up = openUpstream(url, userAgent, null)
                 everConnected = true
                 upstream = up
+                var first = true
                 while (!closed && subscribers.isNotEmpty()) {
                     val n = readChunk(up.input, buf)
+                    if (first) {
+                        first = false
+                        val p = UpstreamProbe.of(up, buf, n)
+                        probe = p
+                        val reason = p.notVideoReason()
+                        if (reason != null) {
+                            // Reintentar no cambia nada: se avisa ya.
+                            failure = reason
+                            fatal = true
+                            log("Canal no válido: $reason")
+                            break
+                        }
+                    }
                     if (n <= 0) break
                     gotData = true
                     failures = 0
@@ -356,7 +440,7 @@ internal class LiveSource(
             }
             if (!gotData) failures++
             // Si nunca se pudo abrir, se avisa pronto en vez de dejar la pantalla en negro.
-            if (failures >= (if (everConnected) MAX_FAILURES else FIRST_OPEN_TRIES)) {
+            if (fatal || failures >= (if (everConnected) MAX_FAILURES else FIRST_OPEN_TRIES)) {
                 log("No se pudo abrir el canal tras $failures intentos")
                 synchronized(lock) {
                     for (q in subscribers) { q.clear(); q.offer(ByteArray(0)) }
@@ -427,6 +511,9 @@ internal class VodSource(
     private var closed = false
     private var fetcher: Thread? = null
     @Volatile private var upstream: Upstream? = null
+    @Volatile private var probe: UpstreamProbe? = null
+
+    override fun info(): String? = probe?.json()
 
     // --- estado de la caché (siempre con lock tomado) ---
 
@@ -506,8 +593,25 @@ internal class VodSource(
             }
 
             try {
-                val up = openUpstream(url, userAgent, start)
+                // Desde el principio se pide sin Range, igual que un reproductor normal.
+                val up = openUpstream(url, userAgent, if (start == 0L) null else start)
                 upstream = up
+                // Se lee el primer trozo antes de anunciar el archivo, para comprobar que es video.
+                val firstN = up.input.read(buf)
+                if (start == 0L) {
+                    val p = UpstreamProbe.of(up, buf, firstN)
+                    probe = p
+                    val reason = p.notVideoReason()
+                    if (reason != null) {
+                        log("Contenido no válido: $reason")
+                        synchronized(lock) {
+                            error = reason
+                            idle = true
+                            lock.notifyAll()
+                        }
+                        continue
+                    }
+                }
                 synchronized(lock) {
                     if (closed) return
                     val code = up.conn.responseCode
@@ -529,8 +633,10 @@ internal class VodSource(
                 }
 
                 var restart = false
+                var pendingFirst: Int? = firstN
                 while (!restart) {
-                    val n = up.input.read(buf)
+                    val n = pendingFirst ?: up.input.read(buf)
+                    pendingFirst = null
                     if (n < 0) break
                     val pos = synchronized(lock) { if (closed) return; fetchPos }
                     val bb = ByteBuffer.wrap(buf, 0, n)

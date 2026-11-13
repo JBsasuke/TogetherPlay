@@ -12,6 +12,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.media3.common.MediaItem
@@ -21,6 +22,8 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -49,19 +52,24 @@ class PlayerActivity : Activity() {
         }
         root.addView(playerView, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
 
-        errorText = Ui.label(this, "", 16f, Ui.muted).apply { gravity = Gravity.CENTER }
+        errorText = Ui.label(this, "", 15f, Ui.muted)
         errorBox = Ui.card(this).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
             visibility = View.GONE
-            addView(Ui.label(context, "No se pudo reproducir", 20f, bold = true).apply { gravity = Gravity.CENTER },
+            addView(Ui.label(context, "No se pudo reproducir", 20f, bold = true),
                 Ui.matchWrap(bottomMargin = Ui.dp(context, 10)))
-            addView(errorText, Ui.matchWrap(bottomMargin = Ui.dp(context, 18)))
+            // El texto puede ser largo: se desplaza sin empujar los botones fuera de la pantalla.
+            val textScroll = ScrollView(context).apply { addView(errorText) }
+            addView(textScroll, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                bottomMargin = Ui.dp(context, 18)
+            })
             addView(Ui.button(context, "Reintentar") { retry() }, Ui.matchWrap(bottomMargin = Ui.dp(context, 10)))
             addView(Ui.button(context, "Salir", Ui.Style.SECONDARY) { finish() }, Ui.matchWrap())
         }
-        root.addView(errorBox, FrameLayout.LayoutParams(Ui.dp(this, 460), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER).apply {
-            leftMargin = Ui.dp(this@PlayerActivity, 16); rightMargin = Ui.dp(this@PlayerActivity, 16)
-        })
+        val metrics = resources.displayMetrics
+        val margin = Ui.dp(this, 16)
+        val boxWidth = minOf(Ui.dp(this, 520), metrics.widthPixels - 2 * margin)
+        val boxHeight = minOf(Ui.dp(this, 460), metrics.heightPixels - 2 * margin)
+        root.addView(errorBox, FrameLayout.LayoutParams(boxWidth, boxHeight, Gravity.CENTER))
         setContentView(root)
         RoomSession.playbackListener = { msg -> onRemote(msg) }
         load(intent)
@@ -110,7 +118,9 @@ class PlayerActivity : Activity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
-                showError(describe(error))
+                val message = describe(error)
+                showError(message)
+                appendProviderInfo(message)
             }
         })
         p.setMediaItem(MediaItem.fromUri(url))
@@ -130,6 +140,40 @@ class PlayerActivity : Activity() {
         playerView.hideController()
         errorBox.visibility = View.VISIBLE
         errorBox.getChildAt(2)?.requestFocus()
+    }
+
+    /** Pide al relay qué respondió el proveedor y lo añade al mensaje (sirve para diagnosticar). */
+    private fun appendProviderInfo(message: String) {
+        val infoUrl = url.replace(Regex("/stream$"), "/info")
+        if (infoUrl == url) return
+        thread {
+            val line = try {
+                val c = URL(infoUrl).openConnection() as HttpURLConnection
+                c.connectTimeout = 4000
+                c.readTimeout = 4000
+                val body = c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
+                c.disconnect()
+                val j = JSONObject(body)
+                if (!j.has("status")) null else buildString {
+                    append("Proveedor: HTTP ").append(j.optInt("status"))
+                    val type = j.optString("contentType")
+                    if (type.isNotBlank()) append(" · ").append(type)
+                    val length = j.optLong("length", -1)
+                    if (length >= 0) append(" · ").append(length / 1024).append(" KB")
+                    val host = j.optString("host")
+                    if (host.isNotBlank()) append(" · ").append(host)
+                    append("\nComienza con: ").append(j.optString("startAscii"))
+                    append("\n(").append(j.optString("startHex")).append(")")
+                }
+            } catch (_: Exception) {
+                null
+            }
+            if (line != null) runOnUiThread {
+                if (errorBox.visibility == View.VISIBLE && errorText.text.toString() == message) {
+                    errorText.text = "$message\n\n$line"
+                }
+            }
+        }
     }
 
     private fun hideError() {
@@ -161,7 +205,7 @@ class PlayerActivity : Activity() {
                     "Este equipo bloquea las conexiones sin cifrar."
                 PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
                 PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
-                    "El formato de este video no es compatible (si es un canal en vivo, puede que el proveedor use HLS)."
+                    "Lo que llegó del proveedor no se reconoce como video."
                 PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
                 PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
                 PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
@@ -175,7 +219,8 @@ class PlayerActivity : Activity() {
         return buildString {
             append(message)
             append("\n\n").append(error.errorCodeName)
-            if (!detail.isNullOrBlank() && http == null) append(" · ").append(detail)
+            val parsing = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
+            if (!detail.isNullOrBlank() && http == null && !parsing) append(" · ").append(detail)
         }
     }
 

@@ -93,12 +93,20 @@ class StreamRelay(
      * comparte del modo que corresponde: HLS (m3u8), canal en vivo (TS) o archivo.
      * Devuelve [FORMAT_HLS] o [FORMAT_PROGRESSIVE]. Lanza IOException con el motivo si no se pudo.
      */
-    fun share(upstreamUrl: String, live: Boolean, agent: String = userAgent): String {
+    fun share(
+        upstreamUrl: String,
+        live: Boolean?,
+        agent: String = userAgent,
+        headers: Map<String, String> = emptyMap()
+    ): String {
         var last: IOException? = null
         for (attempt in 0 until 2) {
             try {
-                val up = openUpstream(upstreamUrl, agent, null)
+                val up = openUpstream(upstreamUrl, agent, null, headers)
+                var isLive = live ?: false
                 try {
+                    // Si no se sabe si es en vivo: sin tamaño conocido se trata como transmisión en vivo.
+                    if (live == null) isLive = up.conn.contentLengthLong < 0
                     val buf = ByteArray(16 * 1024)
                     val n = readSome(up.input, buf)
                     val probe = UpstreamProbe.of(up, buf, n)
@@ -113,7 +121,7 @@ class StreamRelay(
                         }
                         cacheDir.mkdirs()
                         replaceSource(
-                            HlsSource(upstreamUrl, up.finalUrl, body.toByteArray(), agent, "/$token/hls/", cacheDir, probe, log),
+                            HlsSource(upstreamUrl, up.finalUrl, body.toByteArray(), agent, "/$token/hls/", cacheDir, probe, log, headers),
                             isHls = true
                         )
                         log("Formato detectado: HLS")
@@ -125,9 +133,9 @@ class StreamRelay(
                 }
                 // Se deja al proveedor liberar la conexión de prueba antes de abrir la definitiva.
                 Thread.sleep(REOPEN_PAUSE_MS)
-                if (live) shareLive(upstreamUrl, agent) else shareVod(upstreamUrl, agent)
-                log("Formato detectado: " + if (live) "TS en vivo" else "archivo")
-                return FORMAT_PROGRESSIVE
+                if (isLive) shareLive(upstreamUrl, agent, headers) else shareVod(upstreamUrl, agent, headers)
+                log("Formato detectado: " + if (isLive) "TS en vivo" else "archivo")
+                return if (isLive) FORMAT_LIVE else FORMAT_PROGRESSIVE
             } catch (e: IOException) {
                 last = e
                 if (attempt == 0) Thread.sleep(1200)
@@ -137,12 +145,17 @@ class StreamRelay(
     }
 
     /** Comparte un canal en vivo (URL .ts del proveedor). */
-    fun shareLive(upstreamUrl: String, agent: String = userAgent) = replaceSource(LiveSource(upstreamUrl, agent, log), isHls = false)
+    fun shareLive(upstreamUrl: String, agent: String = userAgent, headers: Map<String, String> = emptyMap()) =
+        replaceSource(LiveSource(upstreamUrl, agent, log, headers), isHls = false)
+
+    /** Comparte un archivo de este equipo (p. ej. uno que abrió Kodi desde su almacenamiento). */
+    fun shareLocal(channel: FileChannel, size: Long, contentType: String, onClose: () -> Unit) =
+        replaceSource(LocalSource(channel, size, contentType, onClose), isHls = false)
 
     /** Comparte un episodio o película (archivo .mkv/.mp4 del proveedor). */
-    fun shareVod(upstreamUrl: String, agent: String = userAgent) {
+    fun shareVod(upstreamUrl: String, agent: String = userAgent, headers: Map<String, String> = emptyMap()) {
         cacheDir.mkdirs()
-        replaceSource(VodSource(upstreamUrl, agent, cacheDir, log), isHls = false)
+        replaceSource(VodSource(upstreamUrl, agent, cacheDir, log, headers), isHls = false)
     }
 
     private fun readSome(input: java.io.InputStream, buf: ByteArray): Int {
@@ -206,6 +219,7 @@ class StreamRelay(
         const val DEFAULT_PORT = 8765
         const val FORMAT_HLS = "hls"
         const val FORMAT_PROGRESSIVE = "progressive"
+        const val FORMAT_LIVE = "live"
         private const val REOPEN_PAUSE_MS = 600L
 
         /** Muchos proveedores IPTV rechazan agentes desconocidos; el de VLC casi siempre se acepta. */
@@ -311,7 +325,12 @@ internal class Upstream(val conn: HttpURLConnection, val input: InputStream, val
 }
 
 /** Abre [url] siguiendo redirecciones (los paneles Xtream suelen redirigir a otro host). */
-internal fun openUpstream(url: String, userAgent: String, rangeStart: Long?): Upstream {
+internal fun openUpstream(
+    url: String,
+    userAgent: String,
+    rangeStart: Long?,
+    extra: Map<String, String> = emptyMap()
+): Upstream {
     var current = URL(url)
     for (hop in 0 until 6) {
         val c = current.openConnection() as HttpURLConnection
@@ -320,6 +339,8 @@ internal fun openUpstream(url: String, userAgent: String, rangeStart: Long?): Up
         c.readTimeout = 30_000
         c.setRequestProperty("User-Agent", userAgent)
         c.setRequestProperty("Accept-Encoding", "identity")
+        // Cabeceras que pasó la app de origen (Referer, Cookie, User-Agent propio...).
+        for ((k, v) in extra) c.setRequestProperty(k, v)
         if (rangeStart != null) c.setRequestProperty("Range", "bytes=$rangeStart-")
         val code = c.responseCode
         if (code in 300..399) {
@@ -404,7 +425,8 @@ internal class UpstreamProbe(
 internal class LiveSource(
     private val url: String,
     private val userAgent: String,
-    private val log: (String) -> Unit
+    private val log: (String) -> Unit,
+    private val headers: Map<String, String> = emptyMap()
 ) : Source {
     private val lock = Object()
     private val subscribers = CopyOnWriteArrayList<ArrayBlockingQueue<ByteArray>>()
@@ -467,7 +489,7 @@ internal class LiveSource(
             var gotData = false
             var fatal = false
             try {
-                val up = openUpstream(url, userAgent, null)
+                val up = openUpstream(url, userAgent, null, headers)
                 everConnected = true
                 upstream = up
                 var first = true
@@ -556,7 +578,8 @@ internal class VodSource(
     private val url: String,
     private val userAgent: String,
     cacheDir: File,
-    private val log: (String) -> Unit
+    private val log: (String) -> Unit,
+    private val headers: Map<String, String> = emptyMap()
 ) : Source {
     private val file: File = File.createTempFile("relay-", ".cache", cacheDir)
     private val channel: FileChannel = java.io.RandomAccessFile(file, "rw").channel
@@ -661,7 +684,7 @@ internal class VodSource(
 
             try {
                 // Desde el principio se pide sin Range, igual que un reproductor normal.
-                val up = openUpstream(url, userAgent, if (start == 0L) null else start)
+                val up = openUpstream(url, userAgent, if (start == 0L) null else start, headers)
                 upstream = up
                 // Se lee el primer trozo antes de anunciar el archivo, para comprobar que es video.
                 val firstN = up.input.read(buf)
@@ -886,5 +909,60 @@ internal class VodSource(
         const val RECONNECT_PAUSE_MS = 300L
         const val MAX_FAILURES = 10
         const val FIRST_OPEN_TRIES = 3
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Archivo de este equipo
+// ---------------------------------------------------------------------------
+
+internal class LocalSource(
+    private val channel: FileChannel,
+    private val size: Long,
+    private val contentType: String,
+    private val onClose: () -> Unit
+) : Source {
+    override fun info(): String? = null
+
+    override fun serve(req: Request, out: OutputStream) {
+        val range = req.headers["range"]?.let { Regex("""bytes=(\d*)-(\d*)""").find(it) }
+        var start = 0L
+        var end = size - 1
+        if (range != null) {
+            val a = range.groupValues[1].toLongOrNull()
+            val b = range.groupValues[2].toLongOrNull()
+            if (a == null && b != null) start = maxOf(0, size - b) else {
+                start = a ?: 0L
+                end = minOf(b ?: (size - 1), size - 1)
+            }
+            if (start >= size || end < start) {
+                out.write(head("416 Range Not Satisfiable", listOf("Content-Range" to "bytes */$size", "Content-Length" to "0")))
+                return
+            }
+            out.write(head("206 Partial Content", listOf(
+                "Content-Type" to contentType, "Accept-Ranges" to "bytes",
+                "Content-Length" to (end - start + 1).toString(), "Content-Range" to "bytes $start-$end/$size"
+            )))
+        } else {
+            out.write(head("200 OK", listOf(
+                "Content-Type" to contentType, "Accept-Ranges" to "bytes", "Content-Length" to size.toString()
+            )))
+        }
+        if (req.method == "HEAD") return
+        val buf = ByteBuffer.allocate(64 * 1024)
+        var pos = start
+        while (pos <= end) {
+            buf.clear()
+            buf.limit(minOf(buf.capacity().toLong(), end - pos + 1).toInt())
+            val n = channel.read(buf, pos)
+            if (n <= 0) break
+            out.write(buf.array(), 0, n)
+            pos += n
+        }
+    }
+
+    override fun close() {
+        try { channel.close() } catch (_: IOException) {}
+        onClose()
     }
 }

@@ -120,6 +120,14 @@ class RoomClient(
         }
     }
 
+    /** Señal WebRTC para compartir pantalla (el servidor la reenvía al otro equipo). */
+    fun sendSignal(type: String, payload: JSONObject) {
+        send(JSONObject().put("type", type).put("payload", payload))
+    }
+
+    /** Mensaje propio de la app; viaja por la vía que entienden todas las versiones del servidor. */
+    fun sendCustom(msg: JSONObject) = sendTunneled(msg)
+
     private fun sendTunneled(msg: JSONObject) {
         send(JSONObject().put("type", TUNNEL_TYPE).put("payload", JSONObject().put(TUNNEL_KEY, msg)))
     }

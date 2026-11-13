@@ -332,31 +332,16 @@ class ShareActivity : Activity() {
     // --- compartir ---
 
     private fun share(kind: String, upstreamUrl: String, title: String) {
-        val client = RoomSession.client
-        if (client == null) { toast("Conecta primero con el servidor y entra en una sala."); return }
+        if (RoomSession.client == null) { toast("Conecta primero con el servidor y entra en una sala."); return }
         val appContext = applicationContext
+        toastShort("Abriendo…")
         thread {
             try {
-                val host = when (prefs.getString(NetworkMode.PREF, NetworkMode.AUTO)) {
-                    NetworkMode.TAILSCALE -> StreamRelay.tailscaleAddress()
-                        ?: throw IOException("no encuentro Tailscale; ábrelo y conéctalo en este equipo")
-                    NetworkMode.WIFI -> StreamRelay.localAddress()
-                        ?: throw IOException("no encuentro la red Wi-Fi o de cable de este equipo")
-                    else -> StreamRelay.tailscaleAddress() ?: StreamRelay.localAddress()
-                        ?: throw IOException("no encuentro ni Tailscale ni la red Wi-Fi de este equipo")
-                }
-                val relay = RoomSession.relay(appContext)
-                relay.start()
-                val agent = UserAgents.current(prefs)
-                runOnUiThread { toastShort("Abriendo…") }
                 // Detecta si el proveedor lo entrega en HLS (m3u8), TS o archivo, y lo comparte así.
-                relay.share(upstreamUrl, live = kind == "live", agent = agent)
-                val shared = RoomSession.Share(relay.urlFor(host), kind, title)
-                val localUrl = relay.urlFor("127.0.0.1")
+                val p = Sharing.prepareUrl(appContext, upstreamUrl, live = kind == "live", title = title)
                 runOnUiThread {
-                    RoomSession.currentShare = shared
-                    client.sendRelayShare(shared.url, kind, title)
-                    startActivity(PlayerActivity.intent(this, localUrl, kind, title, host = true))
+                    Sharing.announce(p)
+                    startActivity(PlayerActivity.intent(this, p.localUrl, p.kind, title, host = true))
                 }
             } catch (e: Exception) {
                 runOnUiThread { toast("No se pudo compartir: ${e.message ?: "sin detalles"}") }

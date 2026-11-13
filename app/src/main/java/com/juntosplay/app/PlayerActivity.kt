@@ -143,7 +143,9 @@ class PlayerActivity : Activity() {
         })
         val item = MediaItem.Builder().setUri(url)
         if (Uri.parse(url).path?.endsWith(".m3u8") == true) item.setMimeType(MimeTypes.APPLICATION_M3U8)
-        p.setMediaItem(item.build())
+        val startMs = intent.getLongExtra(EXTRA_START, 0L)
+        // Si la otra app ya iba por un punto de la película, se sigue desde ahí.
+        if (startMs > 0 && kind == "vod") p.setMediaItem(item.build(), startMs) else p.setMediaItem(item.build())
         p.playWhenReady = true
         p.prepare()
     }
@@ -306,13 +308,15 @@ class PlayerActivity : Activity() {
         private const val EXTRA_KIND = "kind"
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HOST = "host"
+        private const val EXTRA_START = "start_ms"
 
-        fun intent(context: Context, url: String, kind: String, title: String, host: Boolean): Intent =
+        fun intent(context: Context, url: String, kind: String, title: String, host: Boolean, startMs: Long = 0L): Intent =
             Intent(context, PlayerActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(EXTRA_URL, url)
                 .putExtra(EXTRA_KIND, kind)
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_HOST, host)
+                .putExtra(EXTRA_START, startMs)
     }
 }

@@ -26,7 +26,8 @@ internal class HlsSource(
     private val prefix: String,
     cacheDir: File,
     private val probe: UpstreamProbe?,
-    private val log: (String) -> Unit
+    private val log: (String) -> Unit,
+    private val headers: Map<String, String> = emptyMap()
 ) : Source {
     private val dir = File(cacheDir, "hls-${System.nanoTime()}").apply { mkdirs() }
     private val lock = Object()
@@ -209,7 +210,7 @@ internal class HlsSource(
         }
 
         private fun fetchOnce() {
-            val up = openUpstream(url, userAgent, null)
+            val up = openUpstream(url, userAgent, null, headers)
             try {
                 val buf = ByteArray(64 * 1024)
                 val n0 = up.input.read(buf)

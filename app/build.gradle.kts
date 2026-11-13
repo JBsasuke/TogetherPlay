@@ -11,8 +11,8 @@ android {
         applicationId = "com.juntosplay.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
     }
 
     compileOptions {
@@ -30,4 +30,5 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-datasource:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    implementation("io.github.webrtc-sdk:android:150.7871.04")
 }

@@ -33,6 +33,23 @@ La app abre el contenido una vez para ver cómo lo entrega el proveedor y lo com
   una sola vez aunque lo vean los dos equipos.
 - **TS en vivo** y **archivos** (.mkv/.mp4), como antes.
 
+## Desde otras apps
+TogetherPlay se registra como reproductor de video. En la app de origen hay que elegirlo
+como reproductor externo (o en «Abrir con»):
+- **TiviMate:** Ajustes → Reproducción → Reproductor → Reproductor externo → TogetherPlay.
+- **Stremio / Nuvio:** Ajustes → Reproductor → Reproductor externo.
+- **WUPlay / M3UFY:** opción de reproductor externo de cada app.
+- **Kodi:** copiar `docs/kodi-playercorefactory.xml` como indica el propio archivo.
+
+La app detecta el formato (HLS, TS en vivo o archivo), respeta las cabeceras que mande la
+app de origen y también comparte archivos locales (content:// y file://).
+
+## Compartir pantalla
+Para lo que no se puede mandar como video. Usa WebRTC: el equipo que comparte transmite
+la pantalla (hasta 720p) y, en Android 10 o más, el sonido de las apps que lo permiten.
+Funciona entre casas con Tailscale en los dos equipos, o directamente si los routers lo
+permiten. Algunas apps (Netflix, etc.) bloquean la captura y se ven en negro.
+
 ## Conexión con el servidor
 Si se corta, la app se reconecta sola y vuelve a entrar a la sala. Si el servidor se
 reinició y perdió la sala, la recrea con el mismo código (necesita el `server.js` de esta

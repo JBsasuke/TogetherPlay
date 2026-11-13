@@ -58,7 +58,7 @@ wss.on("connection", (ws) => {
       room.members.add(ws);
       room.lastActive = Date.now();
       clients.set(ws, roomCode);
-      send(ws, { type: "room_joined", code: roomCode });
+      send(ws, { type: "room_joined", code: roomCode, members: room.members.size });
       for (const peer of room.members) if (peer !== ws) send(peer, { type: "peer_joined" });
       return;
     }

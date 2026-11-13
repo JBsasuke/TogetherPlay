@@ -1,8 +1,11 @@
 package com.juntosplay.app
 
+import android.Manifest
 import android.app.Activity
-import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -15,30 +18,44 @@ import android.widget.Toast
 import org.json.JSONObject
 
 class MainActivity : Activity() {
-    private val prefs by lazy { getSharedPreferences("togetherplay_settings", Context.MODE_PRIVATE) }
+    private val prefs by lazy { RoomSession.prefs(this) }
 
     private lateinit var serverInput: EditText
     private lateinit var statusText: TextView
     private lateinit var statusDot: View
     private lateinit var roomText: TextView
     private lateinit var codeInput: EditText
-    private var roomClient: RoomClient? = null
+    private lateinit var screenButton: TextView
     private var restoringRoom = false
-
-    private val defaultServer = "wss://togetherplay.onrender.com"
+    private val roomClient get() = RoomSession.client
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showHome()
-        val savedServer = prefs.getString("server_url", defaultServer) ?: defaultServer
+        val savedServer = prefs.getString("server_url", RoomSession.DEFAULT_SERVER) ?: RoomSession.DEFAULT_SERVER
         serverInput.setText(savedServer)
         val savedRoom = prefs.getString("room_code", "") ?: ""
         if (savedRoom.isNotBlank()) {
             roomText.text = savedRoom
             codeInput.setText(savedRoom)
-            restoringRoom = true
-            connectServer()
         }
+        RoomSession.uiListener = { msg -> handleServerMessage(msg) }
+        RoomSession.statusListener = { status -> setStatus(status) }
+        if (RoomSession.client == null) {
+            if (savedRoom.isNotBlank()) {
+                restoringRoom = true
+                connectServer()
+            }
+        } else {
+            setStatus(RoomSession.lastStatus)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        RoomSession.uiListener = { msg -> handleServerMessage(msg) }
+        RoomSession.statusListener = { status -> setStatus(status) }
+        updateScreenButton()
     }
 
     private fun dp(value: Int) = Ui.dp(this, value)
@@ -164,6 +181,23 @@ class MainActivity : Activity() {
         watchCard.addView(shareButton, if (wide) LinearLayout.LayoutParams(wrap, wrap) else Ui.matchWrap())
         page.addView(watchCard, Ui.matchWrap(bottomMargin = dp(18)))
 
+        // Otras apps y pantalla.
+        val appsCard = Ui.card(this)
+        appsCard.addView(Ui.sectionTitle(this, "Desde otras apps"))
+        appsCard.addView(Ui.label(this, "Kodi, Stremio, TiviMate, Nuvio, WUPlay, M3UFY…", 18f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
+        appsCard.addView(
+            Ui.label(this, "En esas apps elige TogetherPlay como reproductor externo (o en «Abrir con»). El video se abre aquí y en el otro equipo, igual que con tu IPTV.", 14f, Ui.muted),
+            Ui.matchWrap(bottomMargin = dp(18))
+        )
+        appsCard.addView(Ui.label(this, "Compartir pantalla", 16f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
+        appsCard.addView(
+            Ui.label(this, "Para lo que no se pueda mandar como video: el otro equipo ve tu pantalla en directo, con sonido si la app lo permite.", 14f, Ui.muted),
+            Ui.matchWrap(bottomMargin = dp(14))
+        )
+        screenButton = Ui.button(this, "Compartir mi pantalla", Ui.Style.SECONDARY) { toggleScreenShare() }
+        appsCard.addView(screenButton, if (wide) LinearLayout.LayoutParams(wrap, wrap) else Ui.matchWrap())
+        page.addView(appsCard, Ui.matchWrap(bottomMargin = dp(18)))
+
         page.addView(Ui.label(this, "La aplicación recuerda el servidor y la sala en este televisor. Si el servidor pierde la sala tras reiniciarse, habrá que crear o vincular otra.", 13f, Ui.hint))
 
         // En televisores el foco empieza en un botón, no en un campo de texto.
@@ -189,57 +223,25 @@ class MainActivity : Activity() {
             toast("La dirección debe comenzar con wss:// o ws://")
             return
         }
-        prefs.edit().putString("server_url", url).apply()
-        roomClient?.close()
-        roomClient = RoomClient(
-            onMessage = { msg -> runOnUiThread { handleServerMessage(msg) } },
-            onStatus = { status -> runOnUiThread { setStatus("$status") } },
-            onConnected = {
-                runOnUiThread {
-                    setStatus("conectado al servidor")
-                    val savedRoom = prefs.getString("room_code", "") ?: ""
-                    if (savedRoom.isNotBlank()) {
-                        roomClient?.joinRoom(savedRoom, createIfMissing = true)
-                        setStatus("recuperando sala $savedRoom…")
-                    }
-                }
-            }
-        )
-        RoomSession.client = roomClient
-        roomClient?.connect(url)
+        setStatus("Conectando…")
+        RoomSession.connect(this, url)
     }
 
     private fun handleServerMessage(msg: JSONObject) {
         when (msg.optString("type")) {
             "room_created" -> {
                 val code = msg.optString("code")
-                prefs.edit().putString("room_code", code).apply()
                 codeInput.setText(code)
                 roomText.text = code
                 toast("Sala creada y guardada en este televisor.")
             }
             "room_joined" -> {
                 val code = msg.optString("code")
-                prefs.edit().putString("room_code", code).apply()
                 roomText.text = code
-                setStatus("sala vinculada")
-                toast("Te uniste a la sala.")
+                if (restoringRoom) restoringRoom = false else toast("Te uniste a la sala.")
             }
-            "peer_joined" -> {
-                toast("El otro televisor se conectó.")
-                // Si ya se está compartiendo algo, el que entra tarde lo recibe ahora.
-                RoomSession.currentShare?.let { roomClient?.sendRelayShare(it.url, it.kind, it.title) }
-            }
-            "peer_left" -> toast("El otro televisor se desconectó.")
-            "relay_share" -> {
-                val url = msg.optString("url")
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    startActivity(
-                        PlayerActivity.intent(this, url, msg.optString("kind", "vod"), msg.optString("title"), host = false)
-                    )
-                }
-            }
-            "playback", "relay_stop" -> RoomSession.playbackListener?.invoke(msg)
+            "peer_joined" -> toast("El otro equipo se conectó.")
+            "peer_left" -> toast("El otro equipo se desconectó.")
             "error" -> {
                 val message = msg.optString("message", "Error del servidor")
                 if (restoringRoom) {
@@ -253,10 +255,76 @@ class MainActivity : Activity() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
+    // --- compartir pantalla ---
+
+    private fun updateScreenButton() {
+        if (!::screenButton.isInitialized) return
+        screenButton.text = if (RoomSession.screenHosting) "Dejar de compartir pantalla" else "Compartir mi pantalla"
+    }
+
+    private fun toggleScreenShare() {
+        if (RoomSession.screenHosting) {
+            startService(Intent(this, ScreenShareService::class.java).setAction(ScreenShareService.ACTION_STOP))
+            RoomSession.screenHosting = false
+            updateScreenButton()
+            return
+        }
+        if (roomClient == null || prefs.getString("room_code", "").isNullOrBlank()) {
+            toast("Conecta con el servidor y entra en una sala primero.")
+            return
+        }
+        // El permiso de micrófono es el que Android exige para capturar el sonido de otras apps.
+        if (Build.VERSION.SDK_INT >= 29 && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), REQUEST_AUDIO)
+            return
+        }
+        askCapture()
+    }
+
+    private fun askCapture() {
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        try {
+            startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_CAPTURE)
+        } catch (_: Exception) {
+            toast("Este equipo no permite capturar la pantalla.")
+        }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_AUDIO) return
+        if (grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED) {
+            toast("Sin ese permiso se comparte solo la imagen, sin sonido.")
+        }
+        askCapture()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_CAPTURE) return
+        if (resultCode != RESULT_OK || data == null) {
+            toast("No se autorizó compartir la pantalla.")
+            return
+        }
+        val service = Intent(this, ScreenShareService::class.java)
+            .putExtra(ScreenShareService.EXTRA_RESULT_CODE, resultCode)
+            .putExtra(ScreenShareService.EXTRA_RESULT_DATA, data)
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+        RoomSession.screenHosting = true
+        updateScreenButton()
+        toast("Compartiendo tu pantalla. Ya puedes abrir la app que quieras mostrar.")
+    }
+
     override fun onDestroy() {
-        if (RoomSession.client === roomClient) RoomSession.client = null
-        Thread { RoomSession.stopRelay() }.start()
-        roomClient?.close()
+        // La conexión con la sala sigue viva: otras apps pueden mandar videos a TogetherPlay.
+        if (RoomSession.uiListener != null) RoomSession.uiListener = null
+        RoomSession.statusListener = null
         super.onDestroy()
+    }
+
+    private companion object {
+        const val REQUEST_CAPTURE = 7401
+        const val REQUEST_AUDIO = 7402
     }
 }

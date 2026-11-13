@@ -1,29 +1,64 @@
-# JuntosPlay 0.2.0 — conexión remota inicial
+# TogetherPlay (JuntosPlay) 0.3.0
 
-Este ZIP incluye la app Android TV y un servidor WebSocket de salas.
+App de Android TV para ver contenido en pareja a distancia, con un servidor WebSocket de salas.
 
-## Qué funciona en esta etapa
-- Cliente WebSocket en Android mediante OkHttp.
-- Campo para introducir la dirección del servidor.
-- Crear sala y recibir un código.
-- Unirse con código desde otro dispositivo.
-- El servidor retransmite eventos de pausa/reproducción/avance al otro miembro.
-- Servidor Node.js incluido en `server/`.
+## Qué hace
+- **Salas:** un televisor crea la sala y el otro se une con el código. El servidor está en `server/`.
+- **Ver juntos desde IPTV (Xtream Codes):** el anfitrión elige un canal, película o episodio.
+  Su televisor abre el stream del proveedor **una sola vez** y lo reenvía al otro televisor
+  (relay), así que una suscripción de una conexión alcanza para los dos.
+- **Sincronización:** pausa y reproducción viajan por la sala en ambos sentidos; el anfitrión
+  también mueve la posición en series y películas.
 
-## Qué NO está terminado
-- El servidor aún no está desplegado públicamente.
-- No hay transmisión de video ni archivos.
-- Los botones de control son pruebas de mensajería; todavía no controlan Stremio, TiviMate ni otros reproductores.
-- No hay autenticación, persistencia ni protección antiabuso para producción.
+## Requisitos
+- Red para el video (se elige en la pantalla principal del equipo que comparte):
+  - **Wi-Fi local:** los dos equipos en la misma red de casa; sirve para probar.
+  - **Tailscale:** entre casas distintas, con Tailscale conectado en los dos.
+  - **Automática:** Tailscale si está conectado; si no, la red de casa.
+- El servidor de salas: funciona con la versión anterior (los avisos viajan por la
+  señalización WebRTC que ya reenvía), pero lo ideal es desplegar `server/server.js` de
+  esta versión, que entiende `relay_share` y `relay_stop` directamente.
+- En el televisor anfitrión, espacio libre para la caché: una película o episodio ocupa lo
+  que pesa el archivo mientras se comparte.
 
-## Pasos para probar
-1. Abre `JuntosPlay` en Android Studio.
-2. Instala Node.js 20+ en una computadora o servidor.
-3. Entra en la carpeta `server/`, ejecuta `npm install` y `npm start`.
-4. Para prueba en la misma red, coloca `ws://IP-DEL-SERVIDOR:8080` en la app de ambos dispositivos.
-5. Para Estados Unidos–República Dominicana, despliega el servidor en un hosting público con TLS/WebSocket y coloca la URL `wss://...` en ambos televisores.
+## Uso
+1. En ambos televisores: conectar con el servidor y entrar en la misma sala.
+2. En el anfitrión: **Compartir desde mi IPTV**, escribir la cuenta Xtream (solo la primera
+   vez) y elegir qué ver.
+3. El otro televisor abre el reproductor solo.
 
-**Importante:** la conexión internacional real solo funcionará cuando el servidor esté publicado en Internet y ambos televisores usen su dirección WSS pública. No se ha creado ni contratado hosting desde este proyecto.
+## Formatos
+La app abre el contenido una vez para ver cómo lo entrega el proveedor y lo comparte así:
+- **HLS (m3u8):** las listas se reescriben para pasar por el relay; cada segmento se pide
+  una sola vez aunque lo vean los dos equipos.
+- **TS en vivo** y **archivos** (.mkv/.mp4), como antes.
 
-## Abrir en Android Studio
-Abre la carpeta que contiene `settings.gradle.kts`, sincroniza Gradle y ejecuta `app`.
+## Desde otras apps
+TogetherPlay se registra como reproductor de video. En la app de origen hay que elegirlo
+como reproductor externo (o en «Abrir con»):
+- **TiviMate:** Ajustes → Reproducción → Reproductor → Reproductor externo → TogetherPlay.
+- **Stremio / Nuvio:** Ajustes → Reproductor → Reproductor externo.
+- **WUPlay / M3UFY:** opción de reproductor externo de cada app.
+- **Kodi:** copiar `docs/kodi-playercorefactory.xml` como indica el propio archivo.
+
+La app detecta el formato (HLS, TS en vivo o archivo), respeta las cabeceras que mande la
+app de origen y también comparte archivos locales (content:// y file://).
+
+## Compartir pantalla
+Para lo que no se puede mandar como video. Usa WebRTC: el equipo que comparte transmite
+la pantalla (hasta 720p) y, en Android 10 o más, el sonido de las apps que lo permiten.
+Funciona entre casas con Tailscale en los dos equipos, o directamente si los routers lo
+permiten. Algunas apps (Netflix, etc.) bloquean la captura y se ven en negro.
+
+## Conexión con el servidor
+Si se corta, la app se reconecta sola y vuelve a entrar a la sala. Si el servidor se
+reinició y perdió la sala, la recrea con el mismo código (necesita el `server.js` de esta
+versión; con el anterior hay que crear o unirse a una sala nueva).
+
+## Limitaciones
+- La cuenta Xtream se guarda sin cifrar en las preferencias del televisor anfitrión.
+- El servidor de salas no tiene autenticación ni protección antiabuso.
+
+## Compilar
+Abrir la carpeta en Android Studio, sincronizar Gradle y ejecutar `app`.
+Servidor: Node.js 20+, `npm install` y `npm start` dentro de `server/`.

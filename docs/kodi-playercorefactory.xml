@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Hace que Kodi ofrezca TogetherPlay como reproductor.
+  Copiar a: Android/data/org.xbmc.kodi/files/.kodi/userdata/playercorefactory.xml
+  Luego, en Kodi, mantener pulsado un video → "Reproducir con…" → TogetherPlay.
+  Para usarlo siempre por defecto, quitar el comentario de la sección <rules>.
+-->
+<playercorefactory>
+  <players>
+    <player name="TogetherPlay" type="ExternalPlayer" audio="false" video="true">
+      <filename>com.juntosplay.app</filename>
+      <hidexbmc>true</hidexbmc>
+      <playcountminimumtime>120</playcountminimumtime>
+    </player>
+  </players>
+  <!--
+  <rules action="prepend">
+    <rule video="true" player="TogetherPlay" />
+  </rules>
+  -->
+</playercorefactory>

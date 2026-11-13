@@ -36,6 +36,7 @@ class MainActivity : Activity() {
     private lateinit var cacheText: TextView
     private lateinit var tailscaleCard: TailscaleCard
     private lateinit var crashSlot: LinearLayout
+    private lateinit var cacheLocationSlot: LinearLayout
     private var restoringRoom = false
     private val roomClient get() = RoomSession.client
 
@@ -248,6 +249,10 @@ class MainActivity : Activity() {
         tailscaleCard = TailscaleCard(this, wide)
         deviceCard.addView(tailscaleCard.view, Ui.matchWrap(bottomMargin = dp(18)))
 
+        deviceCard.addView(Ui.label(this, "Dónde guardar la caché del video", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(8)))
+        cacheLocationSlot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        deviceCard.addView(cacheLocationSlot, Ui.matchWrap(bottomMargin = dp(12)))
+
         cacheText = Ui.label(this, "", 14f, Ui.muted)
         deviceCard.addView(cacheText, Ui.matchWrap(bottomMargin = dp(10)))
         val cacheRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -353,7 +358,25 @@ class MainActivity : Activity() {
         batteryText.text = if (exempt) "✓ Android no cerrará la app con la pantalla apagada."
         else "Android puede cerrar la app con la pantalla apagada para ahorrar batería."
         batteryButton.visibility = if (exempt) View.GONE else View.VISIBLE
-        cacheText.text = "Caché del video: ${RoomSession.cacheBytes(this) / (1024 * 1024)} MB · libre en el equipo: ${cacheDir.usableSpace / (1024 * 1024 * 1024)} GB"
+        cacheText.text = "Caché del video: ${RoomSession.cacheBytes(this) / (1024 * 1024)} MB"
+        // Las opciones cambian al conectar o quitar un disco: se rehacen cada vez.
+        cacheLocationSlot.removeAllViews()
+        val options = CacheLocation.options(this)
+        val saved = prefs.getString(CacheLocation.PREF, CacheLocation.INTERNAL) ?: CacheLocation.INTERNAL
+        val selected = if (options.any { it.key == saved }) saved else CacheLocation.INTERNAL
+        // Con varias opciones, una debajo de otra para que se lean bien.
+        val group = Ui.chipGroup(this, options.map { it.key to it.label }, selected, vertical = options.size > 2) { key ->
+            prefs.edit().putString(CacheLocation.PREF, key).apply()
+            toast(if (key == CacheLocation.INTERNAL) "La caché se guardará en la memoria interna." else "La caché se guardará en el disco.")
+            updateDeviceCard()
+        }
+        cacheLocationSlot.addView(group, Ui.matchWrap())
+        val hint = when {
+            CacheLocation.usingFallback(this) -> "El disco elegido no está conectado: mientras tanto se usa la memoria interna."
+            options.size == 1 -> "Conecta un disco o memoria USB (como almacenamiento portátil) y aparecerá aquí."
+            else -> ""
+        }
+        if (hint.isNotBlank()) cacheLocationSlot.addView(Ui.label(this, hint, 13f, Ui.hint), Ui.matchWrap(topMargin = dp(8)))
     }
 
     @SuppressLint("BatteryLife") // la app no se publica en Google Play

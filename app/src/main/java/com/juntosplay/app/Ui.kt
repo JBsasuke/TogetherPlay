@@ -127,8 +127,14 @@ object Ui {
     }
 
     /** Fila de opciones donde solo una queda elegida (resaltada con el degradado). */
-    fun chipGroup(c: Context, options: List<Pair<String, String>>, initial: String, onSelect: (String) -> Unit): LinearLayout {
-        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+    fun chipGroup(
+        c: Context,
+        options: List<Pair<String, String>>,
+        initial: String,
+        vertical: Boolean = false,
+        onSelect: (String) -> Unit
+    ): LinearLayout {
+        val row = LinearLayout(c).apply { orientation = if (vertical) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL }
         val chips = ArrayList<TextView>()
         var selected = initial
         val r = dp(c, 100).toFloat()
@@ -160,9 +166,16 @@ object Ui {
             }
             chips.add(chip)
             paint(chip)
-            row.addView(chip, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
-                if (index > 0) leftMargin = dp(c, 10)
-            })
+            val params = if (vertical) {
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    if (index > 0) topMargin = dp(c, 8)
+                }
+            } else {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (index > 0) leftMargin = dp(c, 10)
+                }
+            }
+            row.addView(chip, params)
         }
         return row
     }

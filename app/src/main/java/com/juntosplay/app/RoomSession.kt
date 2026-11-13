@@ -183,20 +183,31 @@ object RoomSession {
         pendingScreenSignals.toList().also { pendingScreenSignals.clear() }
     }
 
+    private var relayRoot: String? = null
+
+    /** El relay usa la carpeta de caché elegida (interna o disco). Si cambió y no se comparte nada, se rehace. */
     @Synchronized
-    fun relay(context: Context): StreamRelay =
-        relayInstance ?: StreamRelay(File(context.applicationContext.cacheDir, "relay")).also { relayInstance = it }
+    fun relay(context: Context): StreamRelay {
+        val root = CacheLocation.root(context)
+        val current = relayInstance
+        if (current != null && relayRoot != root.absolutePath && currentShare == null) {
+            current.stop()
+            relayInstance = null
+        }
+        return relayInstance ?: StreamRelay(root).also {
+            relayInstance = it
+            relayRoot = root.absolutePath
+        }
+    }
 
-    private fun cacheRoot(context: Context) = File(context.applicationContext.cacheDir, "relay")
+    fun cacheBytes(context: Context): Long = CacheLocation.allRoots(context)
+        .sumOf { root -> root.walkBottomUp().filter { it.isFile }.sumOf { it.length() } }
 
-    fun cacheBytes(context: Context): Long =
-        cacheRoot(context).walkBottomUp().filter { it.isFile }.sumOf { it.length() }
-
-    /** Borra la caché del video si no se está compartiendo nada. Devuelve false si está en uso. */
+    /** Borra la caché del video (en la memoria y en los discos) si no se está compartiendo nada. */
     @Synchronized
     fun clearCache(context: Context): Boolean {
         if (currentShare != null) return false
-        cacheRoot(context).listFiles()?.forEach { it.deleteRecursively() }
+        CacheLocation.allRoots(context).forEach { root -> root.listFiles()?.forEach { it.deleteRecursively() } }
         return true
     }
 

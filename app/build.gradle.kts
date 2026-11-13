@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -20,7 +22,7 @@ android {
     // Firma fija: con la misma llave siempre, las versiones nuevas se instalan encima sin desinstalar.
     // En GitHub viene de los secretos (KEYSTORE_*); en la computadora, de keystore.properties (no se sube).
     val localKeys = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
-        java.util.Properties().apply { f.inputStream().use { load(it) } }
+        Properties().apply { f.inputStream().use { load(it) } }
     }
     val keystorePath = System.getenv("KEYSTORE_FILE") ?: localKeys?.getProperty("storeFile")
     val fixedKey = keystorePath?.let { path ->

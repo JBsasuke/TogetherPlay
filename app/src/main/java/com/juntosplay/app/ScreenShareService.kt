@@ -71,7 +71,7 @@ class ScreenShareService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        quality = intent.getStringExtra(EXTRA_QUALITY) ?: QUALITY_1080
+        quality = intent?.getStringExtra(EXTRA_QUALITY) ?: QUALITY_1080
         try {
             startSession(data)
             started = true

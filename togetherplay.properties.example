@@ -1,0 +1,5 @@
+# Copia este archivo como "togetherplay.properties" (en la misma carpeta) y pon tu servidor.
+# Ese archivo no se sube a GitHub: solo las compilaciones hechas en tu PC traen tu servidor.
+server.url=wss://tu-servidor.onrender.com
+# Clave del servidor (la misma que ROOM_PASSWORD en Render). Déjala vacía si no usas clave.
+server.key=

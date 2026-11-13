@@ -1,6 +1,8 @@
 package com.juntosplay.app
 
 import android.app.Activity
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.content.Context
 import android.graphics.Color
@@ -32,6 +34,7 @@ class MainActivity : Activity() {
     private lateinit var codeInput: EditText
     private var roomClient: RoomClient? = null
     private var restoringRoom = false
+    private val captureRequestCode = 7401
 
     private val defaultServer = "wss://togetherplay.onrender.com"
 
@@ -95,6 +98,8 @@ class MainActivity : Activity() {
                 roomClient?.joinRoom(code) ?: toast("Conecta primero con el servidor.")
             }
         }
+        button("Compartir pantalla") { requestScreenCapture() }
+        button("Detener captura") { stopService(Intent(this, ScreenCaptureService::class.java)) }
         button("Olvidar sala guardada") {
             prefs.edit().remove("room_code").apply()
             roomText.text = "No hay una sala guardada"
@@ -109,6 +114,33 @@ class MainActivity : Activity() {
         button("AVANZAR 30 SEGUNDOS") { roomClient?.sendPlayback("seek", 30_000L) ?: toast("Conecta y entra en una sala.") }
         space(16)
         text("La aplicación recuerda el servidor y la sala en este televisor. Si el servidor pierde la sala tras reiniciarse, habrá que crear o vincular otra.", 14f, false, muted)
+    }
+
+
+    private fun requestScreenCapture() {
+        val code = prefs.getString("room_code", "") ?: ""
+        if (code.isBlank()) {
+            toast("Primero crea una sala o únete a una.")
+            return
+        }
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(manager.createScreenCaptureIntent(), captureRequestCode)
+    }
+
+    @Deprecated("Android screen capture permission result")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != captureRequestCode) return
+        if (resultCode != RESULT_OK || data == null) {
+            toast("No se autorizó compartir la pantalla.")
+            return
+        }
+        val service = Intent(this, ScreenCaptureService::class.java).apply {
+            putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+            putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
+        toast("Captura local iniciada. La transmisión al otro dispositivo aún está en integración.")
     }
 
     private fun connectServer() {

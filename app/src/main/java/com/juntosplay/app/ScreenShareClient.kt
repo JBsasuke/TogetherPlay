@@ -164,7 +164,6 @@ class ScreenShareClient(
         )
         val config = PeerConnection.RTCConfiguration(ice).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         }
         remoteDescriptionReady = false
         pendingIce.clear()

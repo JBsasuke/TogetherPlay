@@ -47,6 +47,10 @@ wss.on("connection", (ws) => {
     }
     if (msg.type === "join_room") {
       const roomCode = String(msg.code || "").trim().toUpperCase();
+      // Al reconectar tras un reinicio del servidor, la app pide recrear la sala con el mismo código.
+      if (!rooms.has(roomCode) && msg.create_if_missing === true && /^[0-9A-F]{6}$/.test(roomCode)) {
+        rooms.set(roomCode, { members: new Set(), createdAt: Date.now(), lastActive: Date.now() });
+      }
       const room = rooms.get(roomCode);
       if (!room) return send(ws, { type: "error", message: "La sala no existe o se perdió tras reiniciar el servidor." });
       if (room.members.size >= 2) return send(ws, { type: "error", message: "La sala ya está llena." });

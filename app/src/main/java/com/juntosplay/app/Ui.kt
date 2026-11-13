@@ -71,8 +71,8 @@ object Ui {
 
     fun card(c: Context): LinearLayout = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
-        background = round(surface, dp(c, 22).toFloat(), dp(c, 1), outline)
-        val p = dp(c, 24)
+        background = round(surface, dp(c, 18).toFloat(), dp(c, 1), outline)
+        val p = dp(c, 20)
         setPadding(p, p, p, p)
     }
 
@@ -83,10 +83,10 @@ object Ui {
         hint = hintText
         setHintTextColor(Ui.hint)
         setTextColor(Ui.text)
-        textSize = 16f
+        textSize = 15f
         setSingleLine(true)
         background = normal
-        setPadding(dp(c, 16), dp(c, 13), dp(c, 16), dp(c, 13))
+        setPadding(dp(c, 14), dp(c, 11), dp(c, 14), dp(c, 11))
         setOnFocusChangeListener { v, hasFocus -> v.background = if (hasFocus) focused else normal }
     }
 
@@ -104,18 +104,18 @@ object Ui {
         val restColor = if (style == Style.GHOST) muted else text
         return TextView(c).apply {
             text = value
-            textSize = 16f
+            textSize = 15f
             gravity = Gravity.CENTER
             setTextColor(restColor)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             background = normal
-            setPadding(dp(c, 22), dp(c, 14), dp(c, 22), dp(c, 14))
+            setPadding(dp(c, 20), dp(c, 11), dp(c, 20), dp(c, 11))
             isFocusable = true
             isClickable = true
+            // El foco se marca con el borde, sin agrandar: así no se corta en los bordes de la tarjeta.
             setOnFocusChangeListener { v, hasFocus ->
                 v.background = if (hasFocus) focused else normal
                 setTextColor(if (hasFocus) Ui.text else restColor)
-                v.animate().scaleX(if (hasFocus) 1.03f else 1f).scaleY(if (hasFocus) 1.03f else 1f).setDuration(120).start()
             }
             setOnClickListener { onClick() }
         }
@@ -140,10 +140,10 @@ object Ui {
             val chip = TextView(c).apply {
                 text = label
                 tag = key
-                textSize = 15f
+                textSize = 14f
                 gravity = Gravity.CENTER
                 typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-                setPadding(dp(c, 18), dp(c, 10), dp(c, 18), dp(c, 10))
+                setPadding(dp(c, 14), dp(c, 9), dp(c, 14), dp(c, 9))
                 isFocusable = true
                 isClickable = true
             }

@@ -16,14 +16,18 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLDecoder
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -84,6 +88,8 @@ class PlayerActivity : Activity() {
     private fun load(intent: Intent) {
         val newUrl = intent.getStringExtra(EXTRA_URL)
         if (newUrl.isNullOrBlank()) { finish(); return }
+        // Al reconectarse la sala llega el mismo aviso otra vez: si ya se está viendo, no se reinicia.
+        if (newUrl == url && player != null && errorBox.visibility != View.VISIBLE) return
         url = newUrl
         isHost = intent.getBooleanExtra(EXTRA_HOST, false)
         kind = intent.getStringExtra(EXTRA_KIND) ?: "vod"
@@ -92,7 +98,13 @@ class PlayerActivity : Activity() {
         hideError()
 
         player?.release()
-        val p = ExoPlayer.Builder(this).build()
+        // Tiempos amplios: el relay espera al proveedor antes de responder.
+        val http = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(30_000)
+        val p = ExoPlayer.Builder(this)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+            .build()
         player = p
         playerView.player = p
         p.addListener(object : Player.Listener {
@@ -118,12 +130,20 @@ class PlayerActivity : Activity() {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                // En vivo, si se quedó atrás, se vuelve al directo sin molestar.
+                if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                    p.seekToDefaultPosition()
+                    p.prepare()
+                    return
+                }
                 val message = describe(error)
                 showError(message)
                 appendProviderInfo(message)
             }
         })
-        p.setMediaItem(MediaItem.fromUri(url))
+        val item = MediaItem.Builder().setUri(url)
+        if (Uri.parse(url).path?.endsWith(".m3u8") == true) item.setMimeType(MimeTypes.APPLICATION_M3U8)
+        p.setMediaItem(item.build())
         p.playWhenReady = true
         p.prepare()
     }
@@ -144,7 +164,7 @@ class PlayerActivity : Activity() {
 
     /** Pide al relay qué respondió el proveedor y lo añade al mensaje (sirve para diagnosticar). */
     private fun appendProviderInfo(message: String) {
-        val infoUrl = url.replace(Regex("/stream$"), "/info")
+        val infoUrl = url.replace(Regex("/stream(\\.m3u8)?$"), "/info")
         if (infoUrl == url) return
         thread {
             val line = try {
@@ -189,6 +209,7 @@ class PlayerActivity : Activity() {
             val relayReason = http.headerFields.entries
                 .firstOrNull { it.key?.equals("X-Relay-Error", ignoreCase = true) == true }
                 ?.value?.firstOrNull()
+                ?.let { raw -> try { URLDecoder.decode(raw, "UTF-8") } catch (_: Exception) { raw } }
             when {
                 relayReason != null -> "El proveedor IPTV no entregó el video: $relayReason."
                 http.responseCode == 404 -> "Ese contenido ya no se está compartiendo."

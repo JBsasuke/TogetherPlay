@@ -83,13 +83,13 @@ class ShareActivity : Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             background = Ui.pageBackground()
-            val side = dp(if (wide) 48 else 20)
-            setPadding(side, dp(28), side, dp(24))
+            val side = dp(if (wide) 40 else 18)
+            setPadding(side, dp(22), side, dp(20))
         }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(38), dp(38)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
-        titles.addView(Ui.label(this, title, 22f, bold = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        titles.addView(Ui.label(this, title, 20f, bold = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
         if (subtitle.isNotBlank()) titles.addView(Ui.label(this, subtitle, 13f, Ui.muted))
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         root.addView(header, Ui.matchWrap(bottomMargin = dp(20)))
@@ -151,25 +151,22 @@ class ShareActivity : Activity() {
 
     /** Tarjeta grande del menú, con borde cian y un poco más grande al enfocarla. */
     private fun tile(title: String, subtitle: String, onClick: () -> Unit): LinearLayout {
-        val r = dp(22).toFloat()
+        val r = dp(18).toFloat()
         val normal = Ui.round(Ui.surface, r, dp(1), Ui.outline)
         val focused = Ui.round(Ui.surfaceHigh, r, dp(3), Ui.cyan)
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM
             background = normal
-            setPadding(dp(22), dp(22), dp(22), dp(22))
-            minimumHeight = dp(if (wide) 150 else 96)
+            setPadding(dp(18), dp(18), dp(18), dp(18))
+            minimumHeight = dp(if (wide) 112 else 88)
             isFocusable = true
             isClickable = true
             addView(View(context).apply { background = Ui.gradient(dp(3).toFloat()) },
                 LinearLayout.LayoutParams(dp(36), dp(5)).apply { bottomMargin = dp(14) })
-            addView(Ui.label(context, title, 20f, bold = true))
+            addView(Ui.label(context, title, 18f, bold = true))
             addView(Ui.label(context, subtitle, 13f, Ui.muted))
-            setOnFocusChangeListener { v, hasFocus ->
-                v.background = if (hasFocus) focused else normal
-                v.animate().scaleX(if (hasFocus) 1.04f else 1f).scaleY(if (hasFocus) 1.04f else 1f).setDuration(120).start()
-            }
+            setOnFocusChangeListener { v, hasFocus -> v.background = if (hasFocus) focused else normal }
             setOnClickListener { onClick() }
         }
     }
@@ -219,12 +216,12 @@ class ShareActivity : Activity() {
             return
         }
         val rowPadH = dp(18)
-        val rowPadV = dp(14)
+        val rowPadV = dp(11)
         val list = ListView(this).apply {
             adapter = object : ArrayAdapter<String>(this@ShareActivity, android.R.layout.simple_list_item_1, labels) {
                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                     val row = (convertView as? TextView) ?: TextView(context).apply {
-                        textSize = 17f
+                        textSize = 16f
                         setTextColor(Ui.text)
                         maxLines = 2
                         ellipsize = TextUtils.TruncateAt.END
@@ -351,7 +348,9 @@ class ShareActivity : Activity() {
                 val relay = RoomSession.relay(appContext)
                 relay.start()
                 val agent = UserAgents.current(prefs)
-                if (kind == "live") relay.shareLive(upstreamUrl, agent) else relay.shareVod(upstreamUrl, agent)
+                runOnUiThread { toastShort("Abriendo…") }
+                // Detecta si el proveedor lo entrega en HLS (m3u8), TS o archivo, y lo comparte así.
+                relay.share(upstreamUrl, live = kind == "live", agent = agent)
                 val shared = RoomSession.Share(relay.urlFor(host), kind, title)
                 val localUrl = relay.urlFor("127.0.0.1")
                 runOnUiThread {

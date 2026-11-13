@@ -2,6 +2,7 @@ package com.juntosplay.app
 
 import okhttp3.*
 import org.json.JSONObject
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 class RoomClient(
@@ -11,6 +12,12 @@ class RoomClient(
 ) {
     private val http = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     private var socket: WebSocket? = null
+    private val scheduler = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var serverUrl: String? = null
+    @Volatile private var closedByUser = false
+    /** Cada intento de conexión tiene su número; los avisos de intentos viejos se ignoran. */
+    @Volatile private var generation = 0
+    @Volatile private var failedAttempts = 0
 
     /** Último aviso de relay enviado, por si el servidor no lo conoce y hay que reenviarlo. */
     @Volatile private var pendingRelay: JSONObject? = null
@@ -18,30 +25,58 @@ class RoomClient(
     @Volatile private var legacyRelay = false
 
     fun connect(serverUrl: String) {
-        if (!serverUrl.startsWith("wss://") && !serverUrl.startsWith("ws://")) {
+        val url = serverUrl.trim()
+        if (!url.startsWith("wss://") && !url.startsWith("ws://")) {
             onStatus("La dirección debe comenzar con wss:// o ws://")
             return
         }
-        val request = Request.Builder().url(serverUrl.trim()).build()
+        this.serverUrl = url
+        closedByUser = false
+        open()
+    }
+
+    private fun open() {
+        val url = serverUrl ?: return
+        val gen = ++generation
+        val request = Request.Builder().url(url).build()
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (gen != generation) { webSocket.cancel(); return }
+                failedAttempts = 0
                 onStatus("Conectado al servidor")
                 onConnected()
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (gen != generation) return
                 val msg = try { JSONObject(text) } catch (_: Exception) {
                     onStatus("Respuesta del servidor no válida")
                     return
                 }
                 handle(msg)
             }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, null)
+            }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                onStatus("Error de conexión: ${t.message ?: "sin detalles"}")
+                if (gen == generation) scheduleReconnect("Sin conexión con el servidor")
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                onStatus("Conexión cerrada")
+                if (gen == generation) scheduleReconnect("Conexión cerrada")
             }
         })
+    }
+
+    /** Vuelve a conectar sola, esperando un poco más en cada intento (2, 4, 8, 16 y luego 30 s). */
+    private fun scheduleReconnect(reason: String) {
+        if (closedByUser) return
+        val delay = minOf(30L, 2L shl minOf(failedAttempts, 3))
+        failedAttempts++
+        onStatus("$reason · reconectando en $delay s…")
+        try {
+            scheduler.schedule({ if (!closedByUser) open() }, delay, TimeUnit.SECONDS)
+        } catch (_: Exception) {
+            // ya se cerró el cliente
+        }
     }
 
     private fun handle(msg: JSONObject) {
@@ -64,7 +99,10 @@ class RoomClient(
     }
 
     fun createRoom() = send(JSONObject().put("type", "create_room"))
-    fun joinRoom(code: String) = send(JSONObject().put("type", "join_room").put("code", code.trim().uppercase()))
+    /** [createIfMissing]: al reconectar, si el servidor se reinició y perdió la sala, la crea con el mismo código. */
+    fun joinRoom(code: String, createIfMissing: Boolean = false) = send(
+        JSONObject().put("type", "join_room").put("code", code.trim().uppercase()).put("create_if_missing", createIfMissing)
+    )
     fun sendPlayback(action: String, positionMs: Long = 0L) {
         send(JSONObject().put("type", "playback").put("action", action).put("positionMs", positionMs))
     }
@@ -90,8 +128,11 @@ class RoomClient(
         if (socket?.send(json.toString()) != true) onStatus("No hay conexión activa con el servidor")
     }
     fun close() {
+        closedByUser = true
+        generation++
         socket?.close(1000, "Cliente cerrando")
         socket = null
+        scheduler.shutdownNow()
         http.dispatcher.executorService.shutdown()
     }
 

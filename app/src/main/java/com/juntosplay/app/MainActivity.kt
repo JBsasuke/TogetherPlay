@@ -48,17 +48,17 @@ class MainActivity : Activity() {
         val scroll = ScrollView(this).apply { background = Ui.pageBackground(); isFillViewport = true }
         val page = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            val side = dp(if (wide) 48 else 20)
-            setPadding(side, dp(28), side, dp(36))
+            val side = dp(if (wide) 40 else 18)
+            setPadding(side, dp(22), side, dp(30))
         }
         scroll.addView(page)
         setContentView(scroll)
 
         // Cabecera: logo, nombre y estado de la conexión.
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        header.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(64), dp(64)))
+        header.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(52), dp(52)))
         val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), 0) }
-        titles.addView(Ui.label(this, "TogetherPlay", 26f, bold = true))
+        titles.addView(Ui.label(this, "TogetherPlay", 22f, bold = true))
         titles.addView(Ui.label(this, "Mira · Juega · Disfruta juntos", 13f, Ui.muted))
         header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -92,7 +92,7 @@ class MainActivity : Activity() {
 
         val roomCard = Ui.card(this)
         roomCard.addView(Ui.sectionTitle(this, "Sala"))
-        roomText = Ui.label(this, "Sin sala", 24f, bold = true).apply { letterSpacing = 0.08f }
+        roomText = Ui.label(this, "Sin sala", 21f, bold = true).apply { letterSpacing = 0.08f }
         roomCard.addView(roomText, Ui.matchWrap(bottomMargin = dp(14)))
         roomCard.addView(Ui.button(this, "Crear sala nueva") {
             if (roomClient == null) toast("Conecta primero con el servidor.")
@@ -131,7 +131,7 @@ class MainActivity : Activity() {
         // Ver juntos.
         val watchCard = Ui.card(this)
         watchCard.addView(Ui.sectionTitle(this, "Ver juntos"))
-        watchCard.addView(Ui.label(this, "Comparte tu IPTV", 20f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
+        watchCard.addView(Ui.label(this, "Comparte tu IPTV", 18f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
         watchCard.addView(
             Ui.label(this, "Elige un canal, película o episodio. Se abre aquí y en el otro televisor con una sola conexión al proveedor.", 14f, Ui.muted),
             Ui.matchWrap(bottomMargin = dp(18))
@@ -174,6 +174,7 @@ class MainActivity : Activity() {
         statusText.text = status.replaceFirstChar { it.uppercase() }
         val t = status.lowercase()
         val color = when {
+            t.contains("reconectando") || t.contains("recuperando") -> Ui.warn
             t.contains("error") || t.contains("no se pudo") || t.contains("cerrada") ||
                 t.contains("desconectado") || t.contains("no hay") || t.contains("debe") -> Ui.bad
             t.contains("conectado") || t.contains("vinculada") -> Ui.ok
@@ -198,7 +199,7 @@ class MainActivity : Activity() {
                     setStatus("conectado al servidor")
                     val savedRoom = prefs.getString("room_code", "") ?: ""
                     if (savedRoom.isNotBlank()) {
-                        roomClient?.joinRoom(savedRoom)
+                        roomClient?.joinRoom(savedRoom, createIfMissing = true)
                         setStatus("recuperando sala $savedRoom…")
                     }
                 }

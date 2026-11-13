@@ -13,7 +13,6 @@ import java.net.Socket
 import java.net.URL
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.nio.file.StandardOpenOption
 import java.security.SecureRandom
 import java.util.TreeMap
 import java.util.concurrent.ArrayBlockingQueue
@@ -53,9 +52,11 @@ class StreamRelay(
     }
     @Volatile private var server: ServerSocket? = null
     @Volatile private var source: Source? = null
+    @Volatile private var hls = false
 
     val port: Int get() = server?.localPort ?: requestedPort
-    val path: String get() = "/$token/stream"
+    /** Con HLS la ruta termina en .m3u8 para que el reproductor lo reconozca. */
+    val path: String get() = "/$token/stream" + if (hls) ".m3u8" else ""
 
     /** URL que debe abrir un reproductor. [host] = 127.0.0.1 o la IP de Tailscale. */
     fun urlFor(host: String): String = "http://$host:$port$path"
@@ -64,7 +65,7 @@ class StreamRelay(
     fun start() {
         if (server != null) return
         // Restos de una sesión anterior que no se cerró bien.
-        cacheDir.listFiles { f -> f.name.startsWith("relay-") && f.name.endsWith(".cache") }?.forEach { it.delete() }
+        cacheDir.listFiles { f -> f.name.startsWith("relay-") || f.name.startsWith("hls-") }?.forEach { it.deleteRecursively() }
         val s = ServerSocket(requestedPort)
         server = s
         thread(name = "relay-accept", isDaemon = true) {
@@ -82,27 +83,87 @@ class StreamRelay(
 
     @Synchronized
     fun stop() {
-        replaceSource(null)
+        replaceSource(null, isHls = false)
         try { server?.close() } catch (_: IOException) {}
         server = null
     }
 
+    /**
+     * Abre el contenido una vez para ver en qué formato lo entrega el proveedor y lo
+     * comparte del modo que corresponde: HLS (m3u8), canal en vivo (TS) o archivo.
+     * Devuelve [FORMAT_HLS] o [FORMAT_PROGRESSIVE]. Lanza IOException con el motivo si no se pudo.
+     */
+    fun share(upstreamUrl: String, live: Boolean, agent: String = userAgent): String {
+        var last: IOException? = null
+        for (attempt in 0 until 2) {
+            try {
+                val up = openUpstream(upstreamUrl, agent, null)
+                try {
+                    val buf = ByteArray(16 * 1024)
+                    val n = readSome(up.input, buf)
+                    val probe = UpstreamProbe.of(up, buf, n)
+                    if (HlsSource.isPlaylist(up.conn.contentType, buf, n)) {
+                        val body = java.io.ByteArrayOutputStream()
+                        if (n > 0) body.write(buf, 0, n)
+                        while (true) {
+                            val r = up.input.read(buf)
+                            if (r < 0) break
+                            body.write(buf, 0, r)
+                            if (body.size() > HlsSource.MAX_PLAYLIST_BYTES) throw IOException("lista HLS demasiado grande")
+                        }
+                        cacheDir.mkdirs()
+                        replaceSource(
+                            HlsSource(upstreamUrl, up.finalUrl, body.toByteArray(), agent, "/$token/hls/", cacheDir, probe, log),
+                            isHls = true
+                        )
+                        log("Formato detectado: HLS")
+                        return FORMAT_HLS
+                    }
+                    probe.notVideoReason()?.let { throw IOException(it) }
+                } finally {
+                    up.close()
+                }
+                // Se deja al proveedor liberar la conexión de prueba antes de abrir la definitiva.
+                Thread.sleep(REOPEN_PAUSE_MS)
+                if (live) shareLive(upstreamUrl, agent) else shareVod(upstreamUrl, agent)
+                log("Formato detectado: " + if (live) "TS en vivo" else "archivo")
+                return FORMAT_PROGRESSIVE
+            } catch (e: IOException) {
+                last = e
+                if (attempt == 0) Thread.sleep(1200)
+            }
+        }
+        throw last ?: IOException("no se pudo abrir el contenido")
+    }
+
     /** Comparte un canal en vivo (URL .ts del proveedor). */
-    fun shareLive(upstreamUrl: String, agent: String = userAgent) = replaceSource(LiveSource(upstreamUrl, agent, log))
+    fun shareLive(upstreamUrl: String, agent: String = userAgent) = replaceSource(LiveSource(upstreamUrl, agent, log), isHls = false)
 
     /** Comparte un episodio o película (archivo .mkv/.mp4 del proveedor). */
     fun shareVod(upstreamUrl: String, agent: String = userAgent) {
         cacheDir.mkdirs()
-        replaceSource(VodSource(upstreamUrl, agent, cacheDir, log))
+        replaceSource(VodSource(upstreamUrl, agent, cacheDir, log), isHls = false)
+    }
+
+    private fun readSome(input: java.io.InputStream, buf: ByteArray): Int {
+        var off = 0
+        while (off < buf.size) {
+            val n = input.read(buf, off, buf.size - off)
+            if (n < 0) break
+            off += n
+            if (off >= 1024) break
+        }
+        return off
     }
 
     /** Deja de compartir y libera la conexión con el proveedor. */
-    fun stopSharing() = replaceSource(null)
+    fun stopSharing() = replaceSource(null, isHls = false)
 
     @Synchronized
-    private fun replaceSource(next: Source?) {
+    private fun replaceSource(next: Source?, isHls: Boolean = false) {
         val old = source
         source = next
+        hls = isHls
         old?.close()
     }
 
@@ -128,7 +189,9 @@ class StreamRelay(
                     out.write(body)
                     return
                 }
-                if (req.path.substringBefore('?') != path || src == null) {
+                val p = req.path.substringBefore('?')
+                val ours = p == "/$token/stream" || p == "/$token/stream.m3u8" || p.startsWith("/$token/hls/")
+                if (!ours || src == null) {
                     out.write(simpleResponse(404, "Not Found")); return
                 }
                 src.serve(req, out)
@@ -141,6 +204,9 @@ class StreamRelay(
 
     companion object {
         const val DEFAULT_PORT = 8765
+        const val FORMAT_HLS = "hls"
+        const val FORMAT_PROGRESSIVE = "progressive"
+        private const val REOPEN_PAUSE_MS = 600L
 
         /** Muchos proveedores IPTV rechazan agentes desconocidos; el de VLC casi siempre se acepta. */
         const val USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
@@ -214,7 +280,7 @@ private fun readRequest(input: InputStream): Request? {
     return Request(parts[0].uppercase(), parts[1], headers)
 }
 
-private fun head(status: String, headers: List<Pair<String, String>>): ByteArray {
+internal fun head(status: String, headers: List<Pair<String, String>>): ByteArray {
     val sb = StringBuilder("HTTP/1.1 ").append(status).append("\r\n")
     for ((k, v) in headers) sb.append(k).append(": ").append(v).append("\r\n")
     sb.append("Connection: close\r\n\r\n")
@@ -225,9 +291,11 @@ private fun simpleResponse(code: Int, text: String): ByteArray =
     head("$code $text", listOf("Content-Length" to "0"))
 
 /** 503 (ExoPlayer no lo reintenta) con el motivo en X-Relay-Error, para que el reproductor lo muestre. */
-private fun relayError(reason: String): ByteArray {
+internal fun relayError(reason: String): ByteArray {
     val clean = reason.replace(Regex("[\\r\\n]+"), " ").take(300)
-    return head("503 Service Unavailable", listOf("Content-Length" to "0", "X-Relay-Error" to clean))
+    // Codificada para que los acentos lleguen bien; el reproductor la decodifica.
+    val encoded = java.net.URLEncoder.encode(clean, "UTF-8")
+    return head("503 Service Unavailable", listOf("Content-Length" to "0", "X-Relay-Error" to encoded))
 }
 
 // ---------------------------------------------------------------------------
@@ -491,8 +559,7 @@ internal class VodSource(
     private val log: (String) -> Unit
 ) : Source {
     private val file: File = File.createTempFile("relay-", ".cache", cacheDir)
-    private val channel: FileChannel =
-        FileChannel.open(file.toPath(), StandardOpenOption.READ, StandardOpenOption.WRITE)
+    private val channel: FileChannel = java.io.RandomAccessFile(file, "rw").channel
 
     private val lock = Object()
     /** Tramos ya descargados: inicio -> fin (exclusivo). */

@@ -27,8 +27,18 @@ App de Android TV para ver contenido en pareja a distancia, con un servidor WebS
    vez) y elegir qué ver.
 3. El otro televisor abre el reproductor solo.
 
+## Formatos
+La app abre el contenido una vez para ver cómo lo entrega el proveedor y lo comparte así:
+- **HLS (m3u8):** las listas se reescriben para pasar por el relay; cada segmento se pide
+  una sola vez aunque lo vean los dos equipos.
+- **TS en vivo** y **archivos** (.mkv/.mp4), como antes.
+
+## Conexión con el servidor
+Si se corta, la app se reconecta sola y vuelve a entrar a la sala. Si el servidor se
+reinició y perdió la sala, la recrea con el mismo código (necesita el `server.js` de esta
+versión; con el anterior hay que crear o unirse a una sala nueva).
+
 ## Limitaciones
-- Los canales en vivo deben ser MPEG-TS (`.ts`); HLS no está soportado.
 - La cuenta Xtream se guarda sin cifrar en las preferencias del televisor anfitrión.
 - El servidor de salas no tiene autenticación ni protección antiabuso.
 

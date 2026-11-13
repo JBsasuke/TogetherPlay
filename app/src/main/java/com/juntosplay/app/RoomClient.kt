@@ -41,6 +41,11 @@ class RoomClient(
     fun sendPlayback(action: String, positionMs: Long = 0L) {
         send(JSONObject().put("type", "playback").put("action", action).put("positionMs", positionMs))
     }
+    /** Avisa al otro televisor que abra [relayUrl] (kind: "live" o "vod"). */
+    fun sendRelayShare(relayUrl: String, kind: String, title: String = "") {
+        send(JSONObject().put("type", "relay_share").put("url", relayUrl).put("kind", kind).put("title", title))
+    }
+    fun sendRelayStop() = send(JSONObject().put("type", "relay_stop"))
     private fun send(json: JSONObject) {
         if (socket?.send(json.toString()) != true) onStatus("No hay conexión activa con el servidor")
     }

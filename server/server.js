@@ -76,6 +76,29 @@ wss.on("connection", (ws) => {
       return;
     }
 
+    // Relay de video: el anfitrión avisa al otro televisor qué URL abrir (su relay
+    // por Tailscale). Por aquí solo viaja la dirección; el video va directo entre ambos.
+    if (msg.type === "relay_share" || msg.type === "relay_stop") {
+      const roomCode = clients.get(ws);
+      const room = roomCode && rooms.get(roomCode);
+      if (!room) return send(ws, { type: "error", message: "Primero crea o únete a una sala." });
+      let event = { type: "relay_stop" };
+      if (msg.type === "relay_share") {
+        const url = String(msg.url || "");
+        if (!/^https?:\/\/[^\s]{1,500}$/.test(url)) {
+          return send(ws, { type: "error", message: "URL de relay no válida." });
+        }
+        event = {
+          type: "relay_share",
+          url,
+          kind: msg.kind === "live" ? "live" : "vod",
+          title: String(msg.title || "").slice(0, 200),
+        };
+      }
+      for (const peer of room.members) if (peer !== ws) send(peer, event);
+      return;
+    }
+
     if (msg.type === "playback") {
       const roomCode = clients.get(ws);
       const room = roomCode && rooms.get(roomCode);

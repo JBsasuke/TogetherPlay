@@ -38,6 +38,9 @@ class ScreenShareClient(
     val eglContext: EglBase.Context get() = egl.eglBaseContext
     private val factory: PeerConnectionFactory
     private var peer: PeerConnection? = null
+    private var surfaceTextureHelper: SurfaceTextureHelper? = null
+    private val pendingIce = mutableListOf<IceCandidate>()
+    private var remoteDescriptionReady = false
     private var localCapturer: ProjectionVideoCapturer? = null
     private var localVideoSource: VideoSource? = null
     private var localVideoTrack: VideoTrack? = null
@@ -71,7 +74,9 @@ class ScreenShareClient(
             ensurePeer()
             val capturer = ProjectionVideoCapturer(mediaProjection)
             val source = factory.createVideoSource(true)
-            capturer.initialize(null, context, source.capturerObserver)
+            val helper = SurfaceTextureHelper.create("TogetherPlay-Capturer", egl.eglBaseContext)
+            surfaceTextureHelper = helper
+            capturer.initialize(helper, context, source.capturerObserver)
             capturer.startCapture(capturer.captureWidth, capturer.captureHeight, 15)
             localCapturer = capturer
             localVideoSource = source
@@ -107,12 +112,18 @@ class ScreenShareClient(
                 )
                 peer?.setRemoteDescription(object : SimpleSdpObserver() {
                     override fun onSetSuccess() {
+                        remoteDescriptionReady = true
+                        flushPendingIce()
                         peer?.createAnswer(object : SimpleSdpObserver() {
                             override fun onCreateSuccess(desc: SessionDescription) {
-                                peer?.setLocalDescription(SimpleSdpObserver(), desc)
-                                sendSignal("webrtc_answer", JSONObject()
-                                    .put("sdpType", desc.type.canonicalForm())
-                                    .put("sdp", desc.description))
+                                peer?.setLocalDescription(object : SimpleSdpObserver() {
+                                    override fun onSetSuccess() {
+                                        sendSignal("webrtc_answer", JSONObject()
+                                            .put("sdpType", desc.type.canonicalForm())
+                                            .put("sdp", desc.description))
+                                    }
+                                    override fun onSetFailure(error: String) { onStatus("No se pudo guardar la respuesta: $error") }
+                                }, desc)
                             }
                             override fun onCreateFailure(error: String) { onStatus("Error creando respuesta: $error") }
                         }, MediaConstraints())
@@ -125,7 +136,10 @@ class ScreenShareClient(
                     SessionDescription.Type.fromCanonicalForm(payload.optString("sdpType", "answer")),
                     payload.optString("sdp")
                 )
-                peer?.setRemoteDescription(SimpleSdpObserver(), sdp)
+                peer?.setRemoteDescription(object : SimpleSdpObserver() {
+                    override fun onSetSuccess() { remoteDescriptionReady = true; flushPendingIce() }
+                    override fun onSetFailure(error: String) { onStatus("Respuesta remota inválida: $error") }
+                }, sdp)
             }
             "webrtc_ice" -> {
                 val candidate = IceCandidate(
@@ -133,9 +147,14 @@ class ScreenShareClient(
                     payload.optInt("sdpMLineIndex"),
                     payload.optString("candidate")
                 )
-                peer?.addIceCandidate(candidate)
+                if (remoteDescriptionReady) peer?.addIceCandidate(candidate) else pendingIce.add(candidate)
             }
         }
+    }
+
+    private fun flushPendingIce() {
+        pendingIce.forEach { peer?.addIceCandidate(it) }
+        pendingIce.clear()
     }
 
     private fun ensurePeer() {
@@ -147,6 +166,8 @@ class ScreenShareClient(
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
         }
+        remoteDescriptionReady = false
+        pendingIce.clear()
         peer = factory.createPeerConnection(config, object : PeerConnection.Observer {
             override fun onSignalingChange(state: PeerConnection.SignalingState) {}
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
@@ -188,11 +209,15 @@ class ScreenShareClient(
         val pc = peer ?: return
         pc.createOffer(object : SimpleSdpObserver() {
             override fun onCreateSuccess(desc: SessionDescription) {
-                pc.setLocalDescription(SimpleSdpObserver(), desc)
-                sendSignal("webrtc_offer", JSONObject()
-                    .put("sdpType", desc.type.canonicalForm())
-                    .put("sdp", desc.description))
-                onStatus("Oferta de transmisión enviada")
+                pc.setLocalDescription(object : SimpleSdpObserver() {
+                    override fun onSetSuccess() {
+                        sendSignal("webrtc_offer", JSONObject()
+                            .put("sdpType", desc.type.canonicalForm())
+                            .put("sdp", desc.description))
+                        onStatus("Oferta de transmisión enviada")
+                    }
+                    override fun onSetFailure(error: String) { onStatus("No se pudo guardar la oferta: $error") }
+                }, desc)
             }
             override fun onCreateFailure(error: String) { onStatus("Error creando oferta: $error") }
         }, MediaConstraints())
@@ -317,6 +342,8 @@ class ScreenShareClient(
         localCapturer = null
         localVideoTrack?.dispose()
         localVideoSource?.dispose()
+        surfaceTextureHelper?.dispose()
+        surfaceTextureHelper = null
         peer?.close()
         peer = null
         factory.dispose()
@@ -348,7 +375,7 @@ class ScreenShareClient(
             captureHeight = ((metrics.heightPixels * scale).toInt() / 2) * 2
         }
 
-        override fun initialize(helper: SurfaceTextureHelper?, context: Context, observer: CapturerObserver) {
+        override fun initialize(helper: SurfaceTextureHelper, context: Context, observer: CapturerObserver) {
             this.observer = observer
         }
 

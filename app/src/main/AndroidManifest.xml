@@ -18,6 +18,7 @@
         <intent><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent>
     </queries>
     <application
+        android:name=".TogetherPlayApp"
         android:allowBackup="true"
         android:label="TogetherPlay"
         android:icon="@mipmap/ic_launcher"

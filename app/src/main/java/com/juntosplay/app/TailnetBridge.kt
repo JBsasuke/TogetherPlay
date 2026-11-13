@@ -51,6 +51,7 @@ object TailnetBridge {
     fun start(context: Context, authKey: String = "") {
         if (started) return
         val app = context.applicationContext
+        try { call("setCrashFile", TogetherPlayApp.nativeCrashFile(app).absolutePath) } catch (_: Exception) {}
         updateInterfaces()
         val dir = File(app.filesDir, "tailscale").absolutePath
         call("start", dir, hostname(), authKey.trim())
@@ -64,7 +65,7 @@ object TailnetBridge {
         if (!available || started) return
         if (!RoomSession.prefs(context).getBoolean(PREF_ENABLED, false)) return
         val app = context.applicationContext
-        Thread { try { start(app) } catch (_: Exception) {} }.start()
+        Thread { try { start(app) } catch (_: Throwable) {} }.start()
     }
 
     fun status(): Status {

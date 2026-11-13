@@ -53,10 +53,16 @@ class SessionService : Service() {
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Salir", exit).build())
             .build()
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (_: Exception) {
+            // Si Android no deja mantenerlo en primer plano, la app sigue igual, solo sin el aviso fijo.
+            stopSelf()
+            return START_NOT_STICKY
         }
         acquireLocks()
         return START_NOT_STICKY

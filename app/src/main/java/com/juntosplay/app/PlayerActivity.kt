@@ -147,6 +147,14 @@ class PlayerActivity : Activity() {
             .build()
         player = p
         playerView.player = p
+        // Toma el control del audio: las apps que respetan esto (como el reproductor de Nuvio) se pausan solas.
+        p.setAudioAttributes(
+            androidx.media3.common.AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build(),
+            true
+        )
         p.addListener(object : Player.Listener {
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 if (isLocalChange()) {

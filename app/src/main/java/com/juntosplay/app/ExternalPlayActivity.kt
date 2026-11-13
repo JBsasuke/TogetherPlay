@@ -74,8 +74,8 @@ class ExternalPlayActivity : Activity() {
                     startActivity(PlayerActivity.intent(this, p.localUrl, p.kind, title, host = true, startMs = startMs))
                     finish()
                 }
-            } catch (e: Exception) {
-                runOnUiThread { showError("No se pudo preparar el video: ${e.message ?: "sin detalles"}") }
+            } catch (e: Throwable) {
+                runOnUiThread { showError("No se pudo preparar el video: ${e.message ?: e.javaClass.simpleName}") }
             }
         }
     }

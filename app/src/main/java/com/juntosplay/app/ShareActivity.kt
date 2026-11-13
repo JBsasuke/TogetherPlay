@@ -344,8 +344,8 @@ class ShareActivity : Activity() {
                     Sharing.announce(p)
                     startActivity(PlayerActivity.intent(this, p.localUrl, p.kind, title, host = true))
                 }
-            } catch (e: Exception) {
-                runOnUiThread { toast("No se pudo compartir: ${e.message ?: "sin detalles"}") }
+            } catch (e: Throwable) {
+                runOnUiThread { toast("No se pudo compartir: ${e.message ?: e.javaClass.simpleName}") }
             }
         }
     }

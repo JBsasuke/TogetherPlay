@@ -13,6 +13,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -34,6 +35,7 @@ class MainActivity : Activity() {
     private lateinit var batteryButton: TextView
     private lateinit var cacheText: TextView
     private lateinit var tailscaleCard: TailscaleCard
+    private lateinit var crashSlot: LinearLayout
     private var restoringRoom = false
     private val roomClient get() = RoomSession.client
 
@@ -51,6 +53,7 @@ class MainActivity : Activity() {
         RoomSession.statusListener = { status -> setStatus(status) }
         // Restos de caché de una sesión anterior que se cerró mal.
         RoomSession.clearCache(this)
+        showLastCrash()
         // Para que se vea el aviso fijo de la sala (Android 13 o más).
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
@@ -121,6 +124,9 @@ class MainActivity : Activity() {
             page.addView(header, Ui.matchWrap(bottomMargin = dp(14)))
             page.addView(pill, LinearLayout.LayoutParams(wrap, wrap).apply { bottomMargin = dp(18) })
         }
+
+        crashSlot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        page.addView(crashSlot, Ui.matchWrap())
 
         // Servidor y sala, lado a lado en televisores.
         val serverCard = Ui.card(this)
@@ -313,6 +319,30 @@ class MainActivity : Activity() {
     }
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+
+    // --- último cierre inesperado ---
+
+    private fun showLastCrash() {
+        val text = TogetherPlayApp.lastCrash(this) ?: return
+        val box = Ui.card(this)
+        box.addView(Ui.label(this, "La app se cerró por un error", 18f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
+        box.addView(Ui.label(this, "Copia el detalle y mándaselo a quien te ayuda con la app, para corregirlo.", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(10)))
+        val detail = Ui.label(this, text.take(1500), 11f, Ui.hint).apply { setTextIsSelectable(true) }
+        box.addView(detail, Ui.matchWrap(bottomMargin = dp(12)))
+        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        row.addView(Ui.button(this, "Copiar detalle") {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("TogetherPlay error", text))
+            toast("Copiado. Pégalo en el chat.")
+        }, LinearLayout.LayoutParams(wrap, wrap).apply { rightMargin = dp(12) })
+        row.addView(Ui.button(this, "Cerrar", Ui.Style.GHOST) {
+            TogetherPlayApp.clearCrash(this)
+            (box.parent as? ViewGroup)?.removeView(box)
+        }, LinearLayout.LayoutParams(wrap, wrap))
+        box.addView(row, Ui.matchWrap())
+        crashSlot.addView(box, Ui.matchWrap(bottomMargin = dp(18)))
+    }
 
     // --- este equipo ---
 

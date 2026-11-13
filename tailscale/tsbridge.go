@@ -14,6 +14,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,8 +82,19 @@ func SetInterfaces(desc string) {
 	}
 }
 
+// SetCrashFile hace que, si la parte de Go falla, el detalle quede en ese archivo.
+func SetCrashFile(path string) {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return
+	}
+	debug.SetCrashOutput(f, debug.CrashOptions{})
+	f.Close()
+}
+
 // Start arranca el nodo. Si no está vinculado, Status() devolverá un enlace de inicio de sesión.
-func Start(dir, hostname, authKey string) error {
+func Start(dir, hostname, authKey string) (err error) {
+	defer recoverInto(&err)
 	mu.Lock()
 	defer mu.Unlock()
 	if srv != nil {
@@ -112,7 +124,12 @@ func Start(dir, hostname, authKey string) error {
 }
 
 // Status devuelve JSON: state (NeedsLogin, Starting, Running...), authURL, ip, name, tailnet, log.
-func Status() string {
+func Status() (result string) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = fmt.Sprintf(`{"state":"Error","error":%q}`, fmt.Sprint(r))
+		}
+	}()
 	mu.Lock()
 	s := srv
 	mu.Unlock()
@@ -151,7 +168,8 @@ func Status() string {
 }
 
 // Serve publica en Tailscale el puerto local indicado (el relay de video).
-func Serve(port int64) error {
+func Serve(port int64) (err error) {
+	defer recoverInto(&err)
 	mu.Lock()
 	defer mu.Unlock()
 	if srv == nil {
@@ -171,7 +189,8 @@ func Serve(port int64) error {
 }
 
 // Proxy abre un puerto local que llega a remote (ip:puerto de Tailscale). Devuelve el puerto.
-func Proxy(remote string) (int64, error) {
+func Proxy(remote string) (port int64, err error) {
+	defer recoverInto(&err)
 	mu.Lock()
 	defer mu.Unlock()
 	if srv == nil {
@@ -190,19 +209,28 @@ func Proxy(remote string) (int64, error) {
 		defer cancel()
 		return s.Dial(ctx, "tcp", remote)
 	})
-	port := int64(ln.Addr().(*net.TCPAddr).Port)
+	port = int64(ln.Addr().(*net.TCPAddr).Port)
 	proxies[remote] = ln
 	ports[remote] = port
 	return port, nil
 }
 
+// recoverInto convierte un fallo de Go en un error normal, para que no cierre la app.
+func recoverInto(err *error) {
+	if r := recover(); r != nil {
+		*err = fmt.Errorf("fallo interno de Tailscale: %v", r)
+	}
+}
+
 func acceptLoop(ln net.Listener, dial func() (net.Conn, error)) {
+	defer func() { recover() }()
 	for {
 		c, err := ln.Accept()
 		if err != nil {
 			return
 		}
 		go func(in net.Conn) {
+			defer func() { recover() }()
 			out, err := dial()
 			if err != nil {
 				in.Close()

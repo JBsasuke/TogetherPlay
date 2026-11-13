@@ -1,8 +1,12 @@
 package com.juntosplay.app
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.content.Context
 import android.graphics.Color
@@ -17,6 +21,8 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import org.json.JSONObject
+import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoTrack
 
 class MainActivity : Activity() {
     private val bg = Color.rgb(12, 15, 29)
@@ -32,9 +38,12 @@ class MainActivity : Activity() {
     private lateinit var statusText: TextView
     private lateinit var roomText: TextView
     private lateinit var codeInput: EditText
+    private lateinit var remoteRenderer: SurfaceViewRenderer
     private var roomClient: RoomClient? = null
+    private var screenShareClient: ScreenShareClient? = null
     private var restoringRoom = false
     private val captureRequestCode = 7401
+    private val audioPermissionRequestCode = 7403
 
     private val defaultServer = "wss://togetherplay.onrender.com"
 
@@ -62,7 +71,7 @@ class MainActivity : Activity() {
         setContentView(scroll)
 
         text("TogetherPlay", 32f, true, white)
-        text("Conecta tus televisores por Internet", 17f, false, muted)
+        text("Comparte pantalla y sonido en directo", 17f, false, muted)
         space(22)
         text("Servidor", 20f, true, accent)
         serverInput = EditText(this).apply {
@@ -98,24 +107,60 @@ class MainActivity : Activity() {
                 roomClient?.joinRoom(code) ?: toast("Conecta primero con el servidor.")
             }
         }
-        button("Compartir pantalla") { requestScreenCapture() }
-        button("Detener captura") { stopService(Intent(this, ScreenCaptureService::class.java)) }
+
+        text("Vista compartida", 20f, true, accent)
+        remoteRenderer = SurfaceViewRenderer(this)
+        remoteRenderer.setBackgroundColor(Color.BLACK)
+        page.addView(remoteRenderer, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (220 * resources.displayMetrics.density).toInt()
+        ).apply { bottomMargin = 12 })
+        createScreenShareClient()
+
+        button("Compartir pantalla y audio") { requestScreenCapture() }
+        button("Detener transmisión") {
+            screenShareClient?.close()
+            screenShareClient = null
+            ScreenCaptureService.onProjectionReady = null
+            stopService(Intent(this, ScreenCaptureService::class.java))
+            remoteRenderer.clearImage()
+            createScreenShareClient()
+            toast("Transmisión detenida.")
+        }
         button("Olvidar sala guardada") {
             prefs.edit().remove("room_code").apply()
             roomText.text = "No hay una sala guardada"
-            toast("Se eliminó el código guardado de este televisor.")
+            toast("Se eliminó el código guardado de este dispositivo.")
         }
 
         space(18)
-        text("Controles de prueba", 20f, true, accent)
-        text("Envía eventos a la otra pantalla. El control real de aplicaciones externas requiere compatibilidad de cada reproductor.", 14f, false, muted)
+        text("Controles de sala", 20f, true, accent)
+        text("Estos controles notifican al otro participante. El control directo de aplicaciones externas depende de cada reproductor.", 14f, false, muted)
         button("PAUSA") { roomClient?.sendPlayback("pause") ?: toast("Conecta y entra en una sala.") }
         button("REPRODUCIR") { roomClient?.sendPlayback("play") ?: toast("Conecta y entra en una sala.") }
         button("AVANZAR 30 SEGUNDOS") { roomClient?.sendPlayback("seek", 30_000L) ?: toast("Conecta y entra en una sala.") }
         space(16)
-        text("La aplicación recuerda el servidor y la sala en este televisor. Si el servidor pierde la sala tras reiniciarse, habrá que crear o vincular otra.", 14f, false, muted)
+        text("La aplicación recuerda el servidor y el código de sala en este dispositivo.", 14f, false, muted)
     }
 
+    private fun createScreenShareClient() {
+        screenShareClient = ScreenShareClient(
+            context = this,
+            sendSignal = { type, payload ->
+                roomClient?.sendSignal(type, payload)
+                    ?: runOnUiThread { statusText.text = "Estado: conecta con el servidor primero" }
+            },
+            onRemoteVideo = { track ->
+                runOnUiThread {
+                    track.addSink(remoteRenderer)
+                    statusText.text = "Estado: recibiendo vídeo remoto"
+                }
+            },
+            onStatus = { status -> runOnUiThread { statusText.text = "Estado: $status" } }
+        )
+        remoteRenderer.init(screenShareClient!!.eglContext, null)
+        remoteRenderer.setEnableHardwareScaler(true)
+        remoteRenderer.setMirror(false)
+    }
 
     private fun requestScreenCapture() {
         val code = prefs.getString("room_code", "") ?: ""
@@ -123,8 +168,24 @@ class MainActivity : Activity() {
             toast("Primero crea una sala o únete a una.")
             return
         }
+        if (Build.VERSION.SDK_INT >= 23 &&
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), audioPermissionRequestCode)
+            return
+        }
         val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(manager.createScreenCaptureIntent(), captureRequestCode)
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == audioPermissionRequestCode) {
+            if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                requestScreenCapture()
+            } else {
+                toast("El permiso de audio es necesario para intentar compartir el sonido interno.")
+            }
+        }
     }
 
     @Deprecated("Android screen capture permission result")
@@ -135,12 +196,17 @@ class MainActivity : Activity() {
             toast("No se autorizó compartir la pantalla.")
             return
         }
+        ScreenCaptureService.onProjectionReady = { projection: MediaProjection ->
+            runOnUiThread {
+                screenShareClient?.startHost(projection)
+                toast("Captura autorizada. Conectando vídeo y audio con la sala.")
+            }
+        }
         val service = Intent(this, ScreenCaptureService::class.java).apply {
             putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
             putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, data)
         }
-        if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
-        toast("Captura local iniciada. La transmisión al otro dispositivo aún está en integración.")
+        if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
     }
 
     private fun connectServer() {
@@ -175,7 +241,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString("room_code", code).apply()
                 codeInput.setText(code)
                 roomText.text = "Sala guardada: $code"
-                toast("Sala creada y guardada en este televisor.")
+                toast("Sala creada y guardada en este dispositivo.")
             }
             "room_joined" -> {
                 val code = msg.optString("code")
@@ -184,8 +250,13 @@ class MainActivity : Activity() {
                 statusText.text = "Estado: sala vinculada"
                 toast("Te uniste a la sala.")
             }
-            "peer_joined" -> toast("El otro televisor se conectó.")
-            "peer_left" -> toast("El otro televisor se desconectó.")
+            "peer_joined" -> {
+                screenShareClient?.onPeerJoined()
+                toast("El otro dispositivo se conectó.")
+            }
+            "peer_left" -> toast("El otro dispositivo se desconectó.")
+            "webrtc_offer", "webrtc_answer", "webrtc_ice" ->
+                screenShareClient?.handleSignal(msg.optString("type"), msg.optJSONObject("payload") ?: JSONObject())
             "playback" -> toast("Control recibido: ${msg.optString("action")}")
             "error" -> {
                 val message = msg.optString("message", "Error del servidor")
@@ -237,6 +308,9 @@ class MainActivity : Activity() {
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
     override fun onDestroy() {
+        ScreenCaptureService.onProjectionReady = null
+        screenShareClient?.close()
+        remoteRenderer.release()
         roomClient?.close()
         super.onDestroy()
     }

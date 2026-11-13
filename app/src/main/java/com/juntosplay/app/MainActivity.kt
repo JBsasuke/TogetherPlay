@@ -26,6 +26,7 @@ class MainActivity : Activity() {
     private val prefs by lazy { RoomSession.prefs(this) }
 
     private lateinit var serverInput: EditText
+    private lateinit var keyInput: EditText
     private lateinit var statusText: TextView
     private lateinit var statusDot: View
     private lateinit var roomText: TextView
@@ -134,7 +135,12 @@ class MainActivity : Activity() {
         serverCard.addView(Ui.sectionTitle(this, "Servidor"))
         serverCard.addView(Ui.label(this, "Dirección del servidor de salas", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(10)))
         serverInput = Ui.input(this, "wss://tu-servidor.com")
-        serverCard.addView(serverInput, Ui.matchWrap(bottomMargin = dp(14)))
+        serverCard.addView(serverInput, Ui.matchWrap(bottomMargin = dp(10)))
+        keyInput = Ui.input(this, "Clave del servidor (si tiene)").apply {
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(prefs.getString("server_key", ""))
+        }
+        serverCard.addView(keyInput, Ui.matchWrap(bottomMargin = dp(14)))
         val connectButton = Ui.button(this, "Guardar y conectar") { connectServer() }
         serverCard.addView(connectButton, Ui.matchWrap())
 
@@ -279,7 +285,7 @@ class MainActivity : Activity() {
         val t = status.lowercase()
         val color = when {
             t.contains("reconectando") || t.contains("recuperando") -> Ui.warn
-            t.contains("error") || t.contains("no se pudo") || t.contains("cerrada") ||
+            t.contains("error") || t.contains("no se pudo") || t.contains("incorrecta") || t.contains("cerrada") ||
                 t.contains("desconectado") || t.contains("no hay") || t.contains("debe") -> Ui.bad
             t.contains("conectado") || t.contains("vinculada") -> Ui.ok
             else -> Ui.warn
@@ -293,6 +299,7 @@ class MainActivity : Activity() {
             toast("La dirección debe comenzar con wss:// o ws://")
             return
         }
+        prefs.edit().putString("server_key", keyInput.text.toString().trim()).apply()
         setStatus("Conectando…")
         RoomSession.connect(this, url)
     }

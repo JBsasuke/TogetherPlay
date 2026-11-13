@@ -24,8 +24,12 @@ class RoomClient(
     /** El servidor es una versión anterior sin relay_share: los avisos van dentro de la señalización WebRTC. */
     @Volatile private var legacyRelay = false
 
-    fun connect(serverUrl: String) {
-        val url = serverUrl.trim()
+    /** [key]: clave del servidor (vacía si el servidor no la pide). */
+    fun connect(serverUrl: String, key: String = "") {
+        var url = serverUrl.trim()
+        if (key.isNotBlank()) {
+            url += (if (url.contains('?')) "&" else "?") + "key=" + java.net.URLEncoder.encode(key.trim(), "UTF-8")
+        }
         if (!url.startsWith("wss://") && !url.startsWith("ws://")) {
             onStatus("La dirección debe comenzar con wss:// o ws://")
             return
@@ -58,7 +62,13 @@ class RoomClient(
                 webSocket.close(1000, null)
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                if (gen == generation) scheduleReconnect("Sin conexión con el servidor")
+                if (gen != generation) return
+                if (response?.code == 401) {
+                    // Reintentar no sirve: la clave está mal o falta.
+                    onStatus("Clave del servidor incorrecta. Revísala en «Servidor».")
+                    return
+                }
+                scheduleReconnect("Sin conexión con el servidor")
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (gen == generation) scheduleReconnect("Conexión cerrada")

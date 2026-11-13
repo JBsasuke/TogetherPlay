@@ -82,7 +82,7 @@ object RoomSession {
             }
         )
         client = c
-        c.connect(url)
+        c.connect(url, prefs(context).getString("server_key", "").orEmpty())
         SessionService.start(context)
     }
 

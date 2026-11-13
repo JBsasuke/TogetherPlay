@@ -17,6 +17,26 @@ android {
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
 
+    // Firma fija: con la misma llave siempre, las versiones nuevas se instalan encima sin desinstalar.
+    // En GitHub viene de los secretos (KEYSTORE_*); en la computadora, de keystore.properties (no se sube).
+    val localKeys = rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
+        java.util.Properties().apply { f.inputStream().use { load(it) } }
+    }
+    val keystorePath = System.getenv("KEYSTORE_FILE") ?: localKeys?.getProperty("storeFile")
+    val fixedKey = keystorePath?.let { path ->
+        signingConfigs.create("fixed") {
+            storeFile = rootProject.file(path)
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: localKeys?.getProperty("storePassword")
+            keyAlias = System.getenv("KEY_ALIAS") ?: localKeys?.getProperty("keyAlias") ?: "togetherplay"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("KEYSTORE_PASSWORD")
+                ?: localKeys?.getProperty("keyPassword") ?: localKeys?.getProperty("storePassword")
+        }
+    }
+    buildTypes {
+        getByName("debug") { if (fixedKey != null) signingConfig = fixedKey }
+        getByName("release") { if (fixedKey != null) signingConfig = fixedKey }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

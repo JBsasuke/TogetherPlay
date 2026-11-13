@@ -17,14 +17,14 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@style/AppTheme">
-        <activity android:name=".MainActivity" android:exported="true">
+        <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="stateHidden|adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".ShareActivity" android:exported="false" />
+        <activity android:name=".ShareActivity" android:exported="false" android:windowSoftInputMode="stateHidden|adjustResize" />
         <activity
             android:name=".PlayerActivity"
             android:exported="false"

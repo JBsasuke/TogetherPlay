@@ -2,16 +2,18 @@ package com.juntosplay.app
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.Color
-import android.graphics.Typeface
 import android.os.Bundle
 import android.text.InputType
+import android.text.TextUtils
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
-import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.juntosplay.app.relay.StreamRelay
@@ -29,9 +31,6 @@ import kotlin.concurrent.thread
  * episodio. Al elegir, arranca el relay, avisa al otro televisor y abre el reproductor.
  */
 class ShareActivity : Activity() {
-    private val bg = Color.rgb(12, 15, 29)
-    private val accent = Color.rgb(139, 124, 255)
-    private val muted = Color.rgb(190, 198, 218)
     private val prefs by lazy { getSharedPreferences("togetherplay_settings", Context.MODE_PRIVATE) }
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -74,83 +73,163 @@ class ShareActivity : Activity() {
 
     // --- pantallas ---
 
-    private fun page(title: String): LinearLayout {
+    private fun dp(value: Int) = Ui.dp(this, value)
+    private val wide get() = resources.configuration.screenWidthDp >= 700
+
+    private fun page(title: String, subtitle: String = ""): LinearLayout {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(bg)
-            setPadding(30, 26, 30, 26)
+            background = Ui.pageBackground()
+            val side = dp(if (wide) 48 else 20)
+            setPadding(side, dp(28), side, dp(24))
         }
-        root.addView(TextView(this).apply {
-            text = title; textSize = 26f; setTextColor(Color.WHITE)
-            setTypeface(typeface, Typeface.BOLD); setPadding(0, 0, 0, 16)
-        })
+        val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        header.addView(ImageView(this).apply { setImageResource(R.drawable.logo) }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        val titles = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+        titles.addView(Ui.label(this, title, 22f, bold = true).apply { maxLines = 1; ellipsize = TextUtils.TruncateAt.END })
+        if (subtitle.isNotBlank()) titles.addView(Ui.label(this, subtitle, 13f, Ui.muted))
+        header.addView(titles, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(header, Ui.matchWrap(bottomMargin = dp(20)))
         setContentView(root)
         return root
     }
 
     private fun showAccountForm() {
-        val root = page("Cuenta IPTV (Xtream Codes)")
-        fun field(hint: String, value: String, password: Boolean = false) = EditText(this).apply {
-            this.hint = hint; setText(value)
-            setHintTextColor(muted); setTextColor(Color.WHITE); textSize = 17f; setSingleLine(true)
-            if (password) inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            root.addView(this, lp())
+        val root = page("Cuenta IPTV", "Xtream Codes")
+        val card = Ui.card(this)
+        card.addView(Ui.sectionTitle(this, "Datos de acceso"))
+        fun field(hint: String, value: String, password: Boolean = false): EditText {
+            val input = Ui.input(this, hint)
+            input.setText(value)
+            if (password) input.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            card.addView(input, Ui.matchWrap(bottomMargin = dp(12)))
+            return input
         }
         val server = field("Servidor, p. ej. http://proveedor.com:8080", prefs.getString("xtream_server", "").orEmpty())
         val user = field("Usuario", prefs.getString("xtream_user", "").orEmpty())
         val pass = field("Contraseña", prefs.getString("xtream_pass", "").orEmpty(), password = true)
-        root.addView(Button(this).apply {
-            text = "Guardar"; isAllCaps = false; textSize = 17f
-            setOnClickListener {
-                var address = server.text.toString().trim()
-                if (address.isNotEmpty() && !address.startsWith("http://") && !address.startsWith("https://")) {
-                    address = "http://$address"
-                }
-                if (address.isBlank() || user.text.isBlank()) {
-                    toast("Escribe el servidor y el usuario.")
-                } else {
-                    prefs.edit()
-                        .putString("xtream_server", address)
-                        .putString("xtream_user", user.text.toString().trim())
-                        .putString("xtream_pass", pass.text.toString())
-                        .apply()
-                    backStack.clear()
-                    current = null
-                    go { showMenu() }
-                }
+        val save = Ui.button(this, "Guardar") {
+            var address = server.text.toString().trim()
+            if (address.isNotEmpty() && !address.startsWith("http://") && !address.startsWith("https://")) {
+                address = "http://$address"
             }
-        }, lp())
-        root.addView(TextView(this).apply {
-            text = "Los datos se guardan solo en este televisor. El otro lado nunca los recibe."
-            textSize = 14f; setTextColor(muted); setPadding(0, 14, 0, 0)
-        })
+            if (address.isBlank() || user.text.isBlank()) {
+                toast("Escribe el servidor y el usuario.")
+            } else {
+                prefs.edit()
+                    .putString("xtream_server", address)
+                    .putString("xtream_user", user.text.toString().trim())
+                    .putString("xtream_pass", pass.text.toString())
+                    .apply()
+                backStack.clear()
+                current = null
+                go { showMenu() }
+            }
+        }
+        card.addView(save, Ui.matchWrap(topMargin = dp(4)))
+        card.addView(
+            Ui.label(this, "Los datos se guardan solo en este televisor. El otro lado nunca los recibe.", 13f, Ui.hint),
+            Ui.matchWrap(topMargin = dp(14))
+        )
+        val scroll = ScrollView(this)
+        scroll.addView(card)
+        val width = if (wide) dp(560) else LinearLayout.LayoutParams.MATCH_PARENT
+        root.addView(scroll, LinearLayout.LayoutParams(width, LinearLayout.LayoutParams.WRAP_CONTENT))
+        if (server.text.isNotBlank()) save.post { save.requestFocus() }
+    }
+
+    /** Tarjeta grande del menú, con borde cian y un poco más grande al enfocarla. */
+    private fun tile(title: String, subtitle: String, onClick: () -> Unit): LinearLayout {
+        val r = dp(22).toFloat()
+        val normal = Ui.round(Ui.surface, r, dp(1), Ui.outline)
+        val focused = Ui.round(Ui.surfaceHigh, r, dp(3), Ui.cyan)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM
+            background = normal
+            setPadding(dp(22), dp(22), dp(22), dp(22))
+            minimumHeight = dp(if (wide) 150 else 96)
+            isFocusable = true
+            isClickable = true
+            addView(View(context).apply { background = Ui.gradient(dp(3).toFloat()) },
+                LinearLayout.LayoutParams(dp(36), dp(5)).apply { bottomMargin = dp(14) })
+            addView(Ui.label(context, title, 20f, bold = true))
+            addView(Ui.label(context, subtitle, 13f, Ui.muted))
+            setOnFocusChangeListener { v, hasFocus ->
+                v.background = if (hasFocus) focused else normal
+                v.animate().scaleX(if (hasFocus) 1.04f else 1f).scaleY(if (hasFocus) 1.04f else 1f).setDuration(120).start()
+            }
+            setOnClickListener { onClick() }
+        }
     }
 
     private fun showMenu() {
         current = current ?: { showMenu() }
-        val options = listOf("Canales en vivo", "Películas", "Series", "Cambiar cuenta IPTV")
-        showList("Compartir desde mi IPTV", options) { index ->
-            when (index) {
-                0 -> browseCategories("live")
-                1 -> browseCategories("vod")
-                2 -> browseCategories("series")
-                else -> go { showAccountForm() }
-            }
+        val root = page("Compartir desde mi IPTV", "Elige qué quieren ver juntos")
+        val tiles = listOf(
+            tile("En vivo", "Canales de TV") { browseCategories("live") },
+            tile("Películas", "Catálogo bajo demanda") { browseCategories("vod") },
+            tile("Series", "Temporadas y episodios") { browseCategories("series") }
+        )
+        val row = LinearLayout(this).apply {
+            orientation = if (wide) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+            // Sitio para que la tarjeta enfocada crezca sin recortarse.
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(6), dp(6), dp(6), dp(6))
         }
+        root.clipChildren = false
+        tiles.forEachIndexed { index, tile ->
+            val last = index == tiles.size - 1
+            val params = if (wide) {
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { if (!last) rightMargin = dp(18) }
+            } else {
+                Ui.matchWrap(bottomMargin = if (last) 0 else dp(14))
+            }
+            row.addView(tile, params)
+        }
+        root.addView(row, Ui.matchWrap(bottomMargin = dp(18)))
+        val wrap = LinearLayout.LayoutParams.WRAP_CONTENT
+        root.addView(
+            Ui.button(this, "Cambiar cuenta IPTV", Ui.Style.GHOST) { go { showAccountForm() } },
+            LinearLayout.LayoutParams(wrap, wrap)
+        )
+        tiles[0].post { tiles[0].requestFocus() }
     }
 
     private fun showList(title: String, labels: List<String>, onPick: (Int) -> Unit) {
-        val root = page(title)
+        val root = page(title, if (labels.isEmpty()) "" else "${labels.size} en la lista · Atrás para volver")
+        val card = Ui.card(this).apply { setPadding(dp(10), dp(10), dp(10), dp(10)) }
         if (labels.isEmpty()) {
-            root.addView(TextView(this).apply { text = "No hay nada en esta lista."; textSize = 17f; setTextColor(muted) })
+            card.setPadding(dp(24), dp(24), dp(24), dp(24))
+            card.addView(Ui.label(this, "No hay nada en esta lista.", 16f, Ui.muted))
+            root.addView(card, Ui.matchWrap())
             return
         }
+        val rowPadH = dp(18)
+        val rowPadV = dp(14)
         val list = ListView(this).apply {
-            adapter = ArrayAdapter(this@ShareActivity, android.R.layout.simple_list_item_1, labels)
+            adapter = object : ArrayAdapter<String>(this@ShareActivity, android.R.layout.simple_list_item_1, labels) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val row = (convertView as? TextView) ?: TextView(context).apply {
+                        textSize = 17f
+                        setTextColor(Ui.text)
+                        maxLines = 2
+                        ellipsize = TextUtils.TruncateAt.END
+                        setPadding(rowPadH, rowPadV, rowPadH, rowPadV)
+                    }
+                    row.text = getItem(position)
+                    return row
+                }
+            }
             setOnItemClickListener { _, _, position, _ -> onPick(position) }
-            setSelector(android.R.drawable.list_selector_background)
+            selector = Ui.round(Ui.surfaceHigh, dp(12).toFloat(), dp(2), Ui.cyan)
+            divider = null
+            dividerHeight = dp(2)
+            isVerticalScrollBarEnabled = false
         }
-        root.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        card.addView(list, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        root.addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         list.requestFocus()
     }
 
@@ -267,7 +346,6 @@ class ShareActivity : Activity() {
         }
     }
 
-    private fun lp() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
     private fun toastShort(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 

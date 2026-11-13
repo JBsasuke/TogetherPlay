@@ -6,10 +6,6 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
-import android.hardware.display.DisplayManager
-import android.hardware.display.VirtualDisplay
-import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Build
@@ -21,16 +17,33 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_DATA = "capture_result_data"
         private const val CHANNEL_ID = "togetherplay_screen_capture"
         private const val NOTIFICATION_ID = 7402
+
+        @Volatile var activeProjection: MediaProjection? = null
+            private set
+        @Volatile var onProjectionReady: ((MediaProjection) -> Unit)? = null
     }
 
-    private var projection: MediaProjection? = null
-    private var virtualDisplay: VirtualDisplay? = null
-    private var imageReader: ImageReader? = null
     private var projectionCallback: MediaProjection.Callback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        createNotificationChannel()
+        val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID)
+        else Notification.Builder(this)
+        val notification = builder
+            .setContentTitle("TogetherPlay")
+            .setContentText("Compartiendo pantalla y audio")
+            .setSmallIcon(android.R.drawable.ic_menu_view)
+            .setOngoing(true)
+            .build()
+
+        if (Build.VERSION.SDK_INT >= 29) {
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+
         val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
         val resultData = if (Build.VERSION.SDK_INT >= 33) {
             intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
@@ -43,51 +56,20 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        createNotificationChannel()
-        val notificationBuilder = if (Build.VERSION.SDK_INT >= 26) {
-            Notification.Builder(this, CHANNEL_ID)
-        } else {
-            @Suppress("DEPRECATION")
-            Notification.Builder(this)
-        }
-        val notification = notificationBuilder
-            .setContentTitle("TogetherPlay")
-            .setContentText("Captura de pantalla activa")
-            .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setOngoing(true)
-            .build()
-
-        if (Build.VERSION.SDK_INT >= 29) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-
         try {
             val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            projection = manager.getMediaProjection(resultCode, resultData)
-            val metrics = resources.displayMetrics
-            val width = metrics.widthPixels.coerceAtLeast(1)
-            val height = metrics.heightPixels.coerceAtLeast(1)
-            val density = metrics.densityDpi
-            imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+            val projection = manager.getMediaProjection(resultCode, resultData)
+            activeProjection = projection
             projectionCallback = object : MediaProjection.Callback() {
-                override fun onStop() { stopCapture() }
+                override fun onStop() {
+                    activeProjection = null
+                    stopSelf()
+                }
             }
-            projection?.registerCallback(projectionCallback!!, null)
-            virtualDisplay = projection?.createVirtualDisplay(
-                "TogetherPlayScreen",
-                width,
-                height,
-                density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                imageReader?.surface,
-                null,
-                null
-            )
-            if (virtualDisplay == null) stopCapture()
-        } catch (_: Exception) {
-            stopCapture()
+            projection.registerCallback(projectionCallback!!, null)
+            onProjectionReady?.invoke(projection)
+        } catch (e: Exception) {
+            stopSelf()
         }
         return START_NOT_STICKY
     }
@@ -99,28 +81,16 @@ class ScreenCaptureService : Service() {
         }
     }
 
-    private fun stopCapture() {
-        virtualDisplay?.release()
-        virtualDisplay = null
-        imageReader?.close()
-        imageReader = null
+    override fun onDestroy() {
+        val projection = activeProjection
+        activeProjection = null
         projectionCallback?.let { projection?.unregisterCallback(it) }
-        projectionCallback = null
         projection?.stop()
-        projection = null
+        projectionCallback = null
         if (Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE) else {
             @Suppress("DEPRECATION")
             stopForeground(true)
         }
-        stopSelf()
-    }
-
-    override fun onDestroy() {
-        virtualDisplay?.release()
-        imageReader?.close()
-        projectionCallback?.let { projection?.unregisterCallback(it) }
-        projection?.stop()
-        projection = null
         super.onDestroy()
     }
 }

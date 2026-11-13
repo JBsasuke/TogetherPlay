@@ -41,6 +41,10 @@ class RoomClient(
     fun sendPlayback(action: String, positionMs: Long = 0L) {
         send(JSONObject().put("type", "playback").put("action", action).put("positionMs", positionMs))
     }
+    fun sendSignal(type: String, payload: JSONObject) {
+        require(type in setOf("webrtc_offer", "webrtc_answer", "webrtc_ice"))
+        send(JSONObject().put("type", type).put("payload", payload))
+    }
     private fun send(json: JSONObject) {
         if (socket?.send(json.toString()) != true) onStatus("No hay conexión activa con el servidor")
     }

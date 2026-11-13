@@ -14,6 +14,8 @@ import android.media.projection.MediaProjection
 import android.media.Image
 import android.media.ImageReader
 import android.os.Build
+import android.os.Handler
+import android.os.HandlerThread
 import org.json.JSONObject
 import org.webrtc.*
 import java.nio.ByteBuffer
@@ -287,7 +289,7 @@ class ScreenShareClient(
                 speaker = track
             }
             if (Build.VERSION.SDK_INT >= 23) {
-                track.write(data, 0, data.size, SystemAudioTrack.WRITE_NON_BLOCKING)
+                track.write(data, 0, data.size, SystemAudioTrack.WRITE_BLOCKING)
             } else {
                 @Suppress("DEPRECATION")
                 track.write(data, 0, data.size)
@@ -336,6 +338,7 @@ class ScreenShareClient(
         private var observer: CapturerObserver? = null
         private var reader: ImageReader? = null
         private var display: VirtualDisplay? = null
+        private var frameThread: HandlerThread? = null
         private var running = false
 
         init {
@@ -356,6 +359,8 @@ class ScreenShareClient(
             val h = captureHeight
             val imageReader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
             reader = imageReader
+            val thread = HandlerThread("TogetherPlay-Frames").apply { start() }
+            frameThread = thread
             imageReader.setOnImageAvailableListener({ source ->
                 val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
                 try {
@@ -363,7 +368,8 @@ class ScreenShareClient(
                 } finally {
                     image.close()
                 }
-            }, android.os.Handler(android.os.Looper.getMainLooper()))
+            }, Handler(thread.looper))
+            observer?.onCapturerStarted(true)
             display = mediaProjection.createVirtualDisplay(
                 "TogetherPlay-WebRTC", w, h, metricsDensity(), DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                 imageReader.surface, null, null
@@ -415,6 +421,9 @@ class ScreenShareClient(
             reader?.setOnImageAvailableListener(null, null)
             reader?.close()
             reader = null
+            frameThread?.quitSafely()
+            frameThread = null
+            observer?.onCapturerStopped()
         }
         override fun changeCaptureFormat(width: Int, height: Int, framerate: Int) {}
         override fun dispose() { stopCapture(); observer = null }

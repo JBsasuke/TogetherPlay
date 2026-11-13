@@ -1,6 +1,8 @@
 name: Android debug build
 
 on:
+  push:
+    branches: [ feature/android-screen-capture ]
   pull_request:
     branches: [ main ]
   workflow_dispatch:

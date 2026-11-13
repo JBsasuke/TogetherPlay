@@ -1,12 +1,16 @@
 package com.juntosplay.app
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
 import android.os.Build
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.widget.EditText
@@ -26,6 +30,9 @@ class MainActivity : Activity() {
     private lateinit var roomText: TextView
     private lateinit var codeInput: EditText
     private lateinit var screenButton: TextView
+    private lateinit var batteryText: TextView
+    private lateinit var batteryButton: TextView
+    private lateinit var cacheText: TextView
     private var restoringRoom = false
     private val roomClient get() = RoomSession.client
 
@@ -41,6 +48,12 @@ class MainActivity : Activity() {
         }
         RoomSession.uiListener = { msg -> handleServerMessage(msg) }
         RoomSession.statusListener = { status -> setStatus(status) }
+        // Restos de caché de una sesión anterior que se cerró mal.
+        RoomSession.clearCache(this)
+        // Para que se vea el aviso fijo de la sala (Android 13 o más).
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+        }
         if (RoomSession.client == null) {
             if (savedRoom.isNotBlank()) {
                 restoringRoom = true
@@ -56,6 +69,7 @@ class MainActivity : Activity() {
         RoomSession.uiListener = { msg -> handleServerMessage(msg) }
         RoomSession.statusListener = { status -> setStatus(status) }
         updateScreenButton()
+        updateDeviceCard()
     }
 
     private fun dp(value: Int) = Ui.dp(this, value)
@@ -198,6 +212,38 @@ class MainActivity : Activity() {
         appsCard.addView(screenButton, if (wide) LinearLayout.LayoutParams(wrap, wrap) else Ui.matchWrap())
         page.addView(appsCard, Ui.matchWrap(bottomMargin = dp(18)))
 
+        // Ajustes de este equipo.
+        val deviceCard = Ui.card(this)
+        deviceCard.addView(Ui.sectionTitle(this, "Este equipo"))
+        batteryText = Ui.label(this, "", 14f, Ui.muted)
+        deviceCard.addView(batteryText, Ui.matchWrap(bottomMargin = dp(10)))
+        batteryButton = Ui.button(this, "Quitar del ahorro de batería", Ui.Style.SECONDARY) { askBatteryExemption() }
+        deviceCard.addView(batteryButton, if (wide) LinearLayout.LayoutParams(wrap, wrap).apply { bottomMargin = dp(18) } else Ui.matchWrap(bottomMargin = dp(18)))
+
+        deviceCard.addView(Ui.label(this, "Calidad al compartir pantalla", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(8)))
+        val quality = prefs.getString(ScreenShareService.PREF_QUALITY, ScreenShareService.QUALITY_1080) ?: ScreenShareService.QUALITY_1080
+        deviceCard.addView(
+            Ui.chipGroup(this, listOf(ScreenShareService.QUALITY_720 to "720p · menos datos", ScreenShareService.QUALITY_1080 to "1080p · más nítido"), quality) {
+                prefs.edit().putString(ScreenShareService.PREF_QUALITY, it).apply()
+            },
+            if (wide) LinearLayout.LayoutParams(Ui.dp(this, 480), wrap).apply { bottomMargin = dp(18) } else Ui.matchWrap(bottomMargin = dp(18))
+        )
+
+        cacheText = Ui.label(this, "", 14f, Ui.muted)
+        deviceCard.addView(cacheText, Ui.matchWrap(bottomMargin = dp(10)))
+        val cacheRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        cacheRow.addView(Ui.button(this, "Limpiar caché", Ui.Style.SECONDARY) {
+            if (RoomSession.clearCache(this)) toast("Caché limpia.")
+            else toast("Ahora se está compartiendo algo: se limpiará al terminar.")
+            updateDeviceCard()
+        }, LinearLayout.LayoutParams(wrap, wrap).apply { rightMargin = dp(12) })
+        cacheRow.addView(Ui.button(this, "Salir de la sala", Ui.Style.GHOST) {
+            RoomSession.disconnect()
+            toast("Saliste de la sala en este equipo.")
+        }, LinearLayout.LayoutParams(wrap, wrap))
+        deviceCard.addView(cacheRow, Ui.matchWrap())
+        page.addView(deviceCard, Ui.matchWrap(bottomMargin = dp(18)))
+
         page.addView(Ui.label(this, "La aplicación recuerda el servidor y la sala en este televisor. Si el servidor pierde la sala tras reiniciarse, habrá que crear o vincular otra.", 13f, Ui.hint))
 
         // En televisores el foco empieza en un botón, no en un campo de texto.
@@ -255,6 +301,31 @@ class MainActivity : Activity() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
+    // --- este equipo ---
+
+    private fun updateDeviceCard() {
+        if (!::batteryText.isInitialized) return
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        val exempt = pm.isIgnoringBatteryOptimizations(packageName)
+        batteryText.text = if (exempt) "✓ Android no cerrará la app con la pantalla apagada."
+        else "Android puede cerrar la app con la pantalla apagada para ahorrar batería."
+        batteryButton.visibility = if (exempt) View.GONE else View.VISIBLE
+        cacheText.text = "Caché del video: ${RoomSession.cacheBytes(this) / (1024 * 1024)} MB · libre en el equipo: ${cacheDir.usableSpace / (1024 * 1024 * 1024)} GB"
+    }
+
+    @SuppressLint("BatteryLife") // la app no se publica en Google Play
+    private fun askBatteryExemption() {
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (_: Exception) {
+            try {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            } catch (_: Exception) {
+                toast("Este equipo no tiene ajuste de ahorro de batería.")
+            }
+        }
+    }
+
     // --- compartir pantalla ---
 
     private fun updateScreenButton() {
@@ -308,6 +379,7 @@ class MainActivity : Activity() {
             return
         }
         val service = Intent(this, ScreenShareService::class.java)
+            .putExtra(ScreenShareService.EXTRA_QUALITY, prefs.getString(ScreenShareService.PREF_QUALITY, ScreenShareService.QUALITY_1080))
             .putExtra(ScreenShareService.EXTRA_RESULT_CODE, resultCode)
             .putExtra(ScreenShareService.EXTRA_RESULT_DATA, data)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(service) else startService(service)
@@ -326,5 +398,6 @@ class MainActivity : Activity() {
     private companion object {
         const val REQUEST_CAPTURE = 7401
         const val REQUEST_AUDIO = 7402
+        const val REQUEST_NOTIFICATIONS = 7404
     }
 }

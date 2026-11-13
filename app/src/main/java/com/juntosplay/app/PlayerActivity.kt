@@ -6,6 +6,9 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.Gravity
 import android.view.KeyEvent
@@ -15,12 +18,14 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -46,6 +51,23 @@ class PlayerActivity : Activity() {
     private var url = ""
     /** Mientras se aplica una orden remota, los cambios locales no se reenvían. */
     private var ignoreLocalUntil = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private lateinit var syncButton: TextView
+    /** Este equipo pidió sincronizar y espera a que el otro esté listo en el mismo punto. */
+    private var leadingSync = false
+    private var leaderPosition = 0L
+    /** El otro pidió sincronizar: al quedar listo en ese punto, se le avisa. */
+    private var awaitingSyncReady = false
+    private val leaderTimeout = Runnable { finishLeadSync() }
+    private val speedReset = Runnable { player?.setPlaybackSpeed(1f) }
+    private val ticker = object : Runnable {
+        override fun run() {
+            // El que comparte manda su posición cada 10 s; el otro corrige si se va desfasando.
+            val p = player
+            if (p != null && isHost && kind == "vod" && p.isPlaying) send("tick", p.currentPosition)
+            handler.postDelayed(this, TICK_MS)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,7 +96,17 @@ class PlayerActivity : Activity() {
         val boxWidth = minOf(Ui.dp(this, 520), metrics.widthPixels - 2 * margin)
         val boxHeight = minOf(Ui.dp(this, 460), metrics.heightPixels - 2 * margin)
         root.addView(errorBox, FrameLayout.LayoutParams(boxWidth, boxHeight, Gravity.CENTER))
+
+        // Botón de sincronizar: aparece junto con los controles del reproductor.
+        syncButton = Ui.button(this, "⟳  Sincronizar", Ui.Style.SECONDARY) { requestSync() }.apply { visibility = View.GONE }
+        root.addView(syncButton, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END
+        ).apply { val m = Ui.dp(this@PlayerActivity, 20); setMargins(m, m, m, m) })
+        playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+            syncButton.visibility = visibility
+        })
         setContentView(root)
+        handler.postDelayed(ticker, TICK_MS)
         RoomSession.playbackListener = { msg -> onRemote(msg) }
         load(intent)
     }
@@ -102,8 +134,13 @@ class PlayerActivity : Activity() {
         val http = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(15_000)
             .setReadTimeoutMs(30_000)
+        // Búfer más grande que el normal: aguanta mejor los altibajos de la conexión entre casas.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
+            .build()
         val p = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
+            .setLoadControl(loadControl)
             .build()
         player = p
         playerView.player = p
@@ -126,7 +163,10 @@ class PlayerActivity : Activity() {
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) hideError()
+                if (playbackState == Player.STATE_READY) {
+                    hideError()
+                    reportSyncReady()
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -248,6 +288,84 @@ class PlayerActivity : Activity() {
     }
 
     private fun isLocalChange() = SystemClock.elapsedRealtime() > ignoreLocalUntil
+    private fun ignoreLocal(ms: Long) { ignoreLocalUntil = SystemClock.elapsedRealtime() + ms }
+    private fun send(action: String, position: Long) { RoomSession.client?.sendPlayback(action, position) }
+
+    // --- sincronizar ---
+
+    private fun isHlsLive(p: ExoPlayer) = p.isCurrentMediaItemLive && p.currentLiveOffset != C.TIME_UNSET
+
+    /**
+     * Este equipo pasa a ser la referencia.
+     * Películas y series: se pausa aquí, el otro salta al mismo punto, avisa que está listo y arrancan juntos.
+     * En vivo (HLS): el otro se pone a la misma distancia del directo. En vivo (TS): los dos vuelven a abrir el canal a la vez.
+     */
+    private fun requestSync() {
+        val p = player ?: return
+        if (RoomSession.client == null) { toast("No hay conexión con la sala."); return }
+        when {
+            kind == "vod" -> {
+                ignoreLocal(1500)
+                p.playWhenReady = false
+                leaderPosition = p.currentPosition
+                leadingSync = true
+                send("sync_hold", leaderPosition)
+                handler.removeCallbacks(leaderTimeout)
+                handler.postDelayed(leaderTimeout, 8_000)
+                toast("Sincronizando…")
+            }
+            isHlsLive(p) -> {
+                send("sync_live", p.currentLiveOffset)
+                toast("El otro equipo se ajusta a este.")
+            }
+            else -> {
+                send("resync_live", 0)
+                reloadLive()
+                toast("Sincronizando el canal en los dos equipos…")
+            }
+        }
+    }
+
+    private fun finishLeadSync() {
+        if (!leadingSync) return
+        leadingSync = false
+        handler.removeCallbacks(leaderTimeout)
+        val p = player ?: return
+        ignoreLocal(1500)
+        p.seekTo(leaderPosition)
+        p.playWhenReady = true
+        send("play", leaderPosition)
+    }
+
+    private fun reportSyncReady() {
+        val p = player ?: return
+        if (!awaitingSyncReady || p.playbackState != Player.STATE_READY) return
+        awaitingSyncReady = false
+        send("sync_ready", p.currentPosition)
+    }
+
+    private fun reloadLive() {
+        val p = player ?: return
+        ignoreLocal(2000)
+        p.stop()
+        p.prepare()
+        p.playWhenReady = true
+    }
+
+    /** Corrección automática: desfases pequeños se arreglan acelerando o frenando un poco; grandes, saltando. */
+    private fun correctDrift(p: ExoPlayer, hostPosition: Long) {
+        if (isHost || kind != "vod" || !p.isPlaying || leadingSync || awaitingSyncReady) return
+        val target = hostPosition + TRANSIT_MS
+        val drift = p.currentPosition - target
+        when {
+            abs(drift) > 3_000 -> { ignoreLocal(1500); p.seekTo(target) }
+            abs(drift) > 400 -> {
+                p.setPlaybackSpeed(if (drift > 0) 0.95f else 1.05f)
+                handler.removeCallbacks(speedReset)
+                handler.postDelayed(speedReset, (abs(drift) / 0.05).toLong().coerceAtMost(30_000))
+            }
+        }
+    }
 
     private fun onRemote(msg: JSONObject) {
         val p = player ?: return
@@ -257,12 +375,30 @@ class PlayerActivity : Activity() {
                 finish()
             }
             "playback" -> {
-                ignoreLocalUntil = SystemClock.elapsedRealtime() + 1000
                 val position = msg.optLong("positionMs", 0L)
+                when (msg.optString("action")) {
+                    "tick" -> { correctDrift(p, position); return }
+                    "sync_ready" -> { finishLeadSync(); return }
+                }
+                ignoreLocal(1000)
                 when (msg.optString("action")) {
                     "pause" -> { alignTo(p, position); p.playWhenReady = false }
                     "play" -> { alignTo(p, position); p.playWhenReady = true }
                     "seek" -> if (kind == "vod") p.seekTo(position)
+                    "sync_hold" -> {
+                        ignoreLocal(2000)
+                        p.playWhenReady = false
+                        p.setPlaybackSpeed(1f)
+                        awaitingSyncReady = true
+                        p.seekTo(position)
+                        // Si el salto cae en lo ya cargado puede no haber cambio de estado: se comprueba igual.
+                        handler.postDelayed({ reportSyncReady() }, 400)
+                    }
+                    "sync_live" -> if (isHlsLive(p)) {
+                        val delta = p.currentLiveOffset - position
+                        if (abs(delta) > 300) p.seekTo(p.currentPosition + delta)
+                    }
+                    "resync_live" -> reloadLive()
                 }
             }
         }
@@ -276,16 +412,28 @@ class PlayerActivity : Activity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Con el cuadro de error visible, el control remoto maneja sus botones y no el reproductor.
         if (errorBox.visibility == View.VISIBLE) return super.dispatchKeyEvent(event)
+        // Atajo en el control remoto: botón de menú (o rojo) = sincronizar.
+        if (event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_PROG_RED) {
+            if (event.action == KeyEvent.ACTION_UP) requestSync()
+            return true
+        }
+        if (syncButton.hasFocus()) return super.dispatchKeyEvent(event)
         return playerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
     }
 
     override fun onStop() {
         super.onStop()
-        // Al salir de la pantalla no tiene sentido seguir descargando.
-        if (!isChangingConfigurations) finish()
+        if (isChangingConfigurations || isFinishing) return
+        // Con la pantalla apagada se sigue reproduciendo (y compartiendo) como si nada.
+        val screenOn = (getSystemService(POWER_SERVICE) as PowerManager).isInteractive
+        if (!screenOn) return
+        // Si se fue a otra app, se pausa solo aquí; el otro equipo sigue viendo.
+        ignoreLocal(1500)
+        player?.playWhenReady = false
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         RoomSession.playbackListener = null
         player?.release()
         player = null
@@ -309,6 +457,9 @@ class PlayerActivity : Activity() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HOST = "host"
         private const val EXTRA_START = "start_ms"
+        private const val TICK_MS = 10_000L
+        /** Tiempo aproximado que tarda un mensaje en llegar al otro equipo. */
+        private const val TRANSIT_MS = 150L
 
         fun intent(context: Context, url: String, kind: String, title: String, host: Boolean, startMs: Long = 0L): Intent =
             Intent(context, PlayerActivity::class.java)

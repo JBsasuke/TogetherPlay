@@ -650,6 +650,7 @@ internal class VodSource(
 
     private fun fetchLoop() {
         var failures = 0
+        var sinceSpaceCheck = 0L
         val buf = ByteArray(64 * 1024)
         while (true) {
             var start = -1L
@@ -729,6 +730,14 @@ internal class VodSource(
                     pendingFirst = null
                     if (n < 0) break
                     val pos = synchronized(lock) { if (closed) return; fetchPos }
+                    // Cada ~32 MB se revisa el espacio libre: mejor un aviso claro que un error de disco lleno.
+                    sinceSpaceCheck += n
+                    if (sinceSpaceCheck >= SPACE_CHECK_BYTES) {
+                        sinceSpaceCheck = 0
+                        if (file.usableSpace < MIN_FREE_BYTES) {
+                            throw IOException("no queda espacio en este equipo para la caché del video. Libera espacio o usa «Limpiar caché»")
+                        }
+                    }
                     val bb = ByteBuffer.wrap(buf, 0, n)
                     var written = 0
                     while (bb.hasRemaining()) written += channel.write(bb, pos + written)
@@ -766,7 +775,8 @@ internal class VodSource(
                 val give = synchronized(lock) {
                     if (closed) return
                     failures++
-                    // Si el archivo nunca se pudo abrir, se avisa pronto.
+                    // Si el archivo nunca se pudo abrir, se avisa pronto. Sin espacio, reintentar no sirve.
+                    if (e.message?.startsWith("no queda espacio") == true) failures = MAX_FAILURES
                     val limit = if (headersKnown) MAX_FAILURES else FIRST_OPEN_TRIES
                     if (failures >= limit) {
                         error = e.message ?: "no se pudo descargar del proveedor"
@@ -907,6 +917,8 @@ internal class VodSource(
         const val MIN_RUN_MS = 3000L
         const val MAX_AHEAD = 256L * 1024 * 1024   // máximo adelantado respecto a lo que se ve
         const val RECONNECT_PAUSE_MS = 300L
+        const val SPACE_CHECK_BYTES = 32L * 1024 * 1024
+        const val MIN_FREE_BYTES = 300L * 1024 * 1024
         const val MAX_FAILURES = 10
         const val FIRST_OPEN_TRIES = 3
     }

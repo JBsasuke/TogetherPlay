@@ -27,6 +27,7 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpParameters
 import org.webrtc.ScreenCapturerAndroid
 import org.webrtc.SurfaceTextureHelper
 import org.webrtc.VideoSource
@@ -53,6 +54,7 @@ class ScreenShareService : Service() {
     private val pendingIce = ArrayList<IceCandidate>()
     private var remoteSet = false
     private var started = false
+    private var quality = QUALITY_1080
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -69,6 +71,7 @@ class ScreenShareService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        quality = intent.getStringExtra(EXTRA_QUALITY) ?: QUALITY_1080
         try {
             startSession(data)
             started = true
@@ -132,13 +135,14 @@ class ScreenShareService : Service() {
         offer()
     }
 
-    /** Pantalla a 1280 px en el lado largo como máximo (720p en una TV). */
+    /** Tamaño de captura según la calidad elegida: 1920 o 1280 px en el lado largo como máximo. */
     private fun captureSize(): Pair<Int, Int> {
         val dm = DisplayMetrics()
         @Suppress("DEPRECATION")
         (getSystemService(WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(dm)
         val long = maxOf(dm.widthPixels, dm.heightPixels).coerceAtLeast(1)
-        val scale = minOf(1f, 1280f / long)
+        val maxLong = if (quality == QUALITY_720) 1280f else 1920f
+        val scale = minOf(1f, maxLong / long)
         return ((dm.widthPixels * scale).toInt() / 2 * 2) to ((dm.heightPixels * scale).toInt() / 2 * 2)
     }
 
@@ -165,7 +169,20 @@ class ScreenShareService : Service() {
             }
         }) ?: return
         peer = pc
-        pc.addTrack(track, listOf("tp"))
+        val sender = pc.addTrack(track, listOf("tp"))
+        // Más bitrate y sin bajar la resolución: en pantalla compartida importa más la nitidez que la fluidez.
+        try {
+            val params = sender.parameters
+            params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+            for (e in params.encodings) {
+                e.maxBitrateBps = if (quality == QUALITY_720) 4_000_000 else 8_000_000
+                e.minBitrateBps = if (quality == QUALITY_720) 1_200_000 else 2_500_000
+                e.maxFramerate = 30
+            }
+            sender.parameters = params
+        } catch (_: Exception) {
+            // Si esta versión de Android/WebRTC no lo admite, se usan los valores normales.
+        }
         audioChannel = pc.createDataChannel("tp-audio", DataChannel.Init().apply {
             ordered = false
             maxRetransmits = 0
@@ -271,6 +288,10 @@ class ScreenShareService : Service() {
         const val ACTION_STOP = "com.juntosplay.app.STOP_SCREEN"
         const val EXTRA_RESULT_CODE = "result_code"
         const val EXTRA_RESULT_DATA = "result_data"
+        const val EXTRA_QUALITY = "quality"
+        const val PREF_QUALITY = "screen_quality"
+        const val QUALITY_720 = "720"
+        const val QUALITY_1080 = "1080"
         private const val CHANNEL = "togetherplay_screen"
         private const val NOTIFICATION_ID = 7402
     }

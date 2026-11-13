@@ -82,6 +82,17 @@ object RoomSession {
         )
         client = c
         c.connect(url)
+        SessionService.start(context)
+    }
+
+    /** Sale de la sala en este equipo: cierra la conexión, deja de compartir y quita el aviso. */
+    fun disconnect() {
+        client?.close()
+        client = null
+        peerPresent = false
+        setStatus("Desconectado")
+        Thread { stopRelay() }.start()
+        app?.let { SessionService.stop(it) }
     }
 
     /** Conecta con el servidor guardado si todavía no hay conexión. Devuelve false si no hay sala guardada. */
@@ -173,6 +184,19 @@ object RoomSession {
     @Synchronized
     fun relay(context: Context): StreamRelay =
         relayInstance ?: StreamRelay(File(context.applicationContext.cacheDir, "relay")).also { relayInstance = it }
+
+    private fun cacheRoot(context: Context) = File(context.applicationContext.cacheDir, "relay")
+
+    fun cacheBytes(context: Context): Long =
+        cacheRoot(context).walkBottomUp().filter { it.isFile }.sumOf { it.length() }
+
+    /** Borra la caché del video si no se está compartiendo nada. Devuelve false si está en uso. */
+    @Synchronized
+    fun clearCache(context: Context): Boolean {
+        if (currentShare != null) return false
+        cacheRoot(context).listFiles()?.forEach { it.deleteRecursively() }
+        return true
+    }
 
     @Synchronized
     fun stopRelay() {

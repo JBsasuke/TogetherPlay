@@ -128,10 +128,12 @@ internal class HlsSource(
     private fun evictLocked(): List<Resource> {
         val removed = ArrayList<Resource>()
         var bytes = resources.values.sumOf { it.size() }
+        // Tope: 300 MB, o menos si el equipo tiene poco espacio libre.
+        val cap = minOf(MAX_CACHE_BYTES, dir.usableSpace / 4).coerceAtLeast(64L * 1024 * 1024)
         val candidates = resources.values.filter { it.isMedia() && it.readers == 0 && it.isDone() }
             .sortedBy { it.lastUsed }
         for (c in candidates) {
-            if (bytes <= MAX_CACHE_BYTES) break
+            if (bytes <= cap) break
             bytes -= c.size()
             resources.remove(c.url)
             removed.add(c)

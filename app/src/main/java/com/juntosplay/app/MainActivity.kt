@@ -122,7 +122,7 @@ class MainActivity : Activity() {
             screenShareClient = null
             ScreenCaptureService.onProjectionReady = null
             stopService(Intent(this, ScreenCaptureService::class.java))
-            remoteRenderer.clearImage()
+            remoteRenderer.release()
             createScreenShareClient()
             toast("Transmisión detenida.")
         }
@@ -310,6 +310,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         ScreenCaptureService.onProjectionReady = null
         screenShareClient?.close()
+        stopService(Intent(this, ScreenCaptureService::class.java))
         remoteRenderer.release()
         roomClient?.close()
         super.onDestroy()

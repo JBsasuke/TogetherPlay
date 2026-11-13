@@ -58,6 +58,24 @@ wss.on("connection", (ws) => {
       for (const peer of room.members) if (peer !== ws) send(peer, { type: "peer_joined" });
       return;
     }
+    // WebRTC signaling: forward offers, answers, and ICE candidates only
+    // to the other member of the sender's room. Media itself is not sent here.
+    if (["webrtc_offer", "webrtc_answer", "webrtc_ice"].includes(msg.type)) {
+      const roomCode = clients.get(ws);
+      const room = roomCode && rooms.get(roomCode);
+      if (!room || room.members.size !== 2) {
+        return send(ws, { type: "error", message: "Se necesitan dos dispositivos conectados a la sala." });
+      }
+      const payload = msg.payload;
+      if (payload == null || JSON.stringify(payload).length > 100000) {
+        return send(ws, { type: "error", message: "Señal WebRTC no válida o demasiado grande." });
+      }
+      for (const peer of room.members) {
+        if (peer !== ws) send(peer, { type: msg.type, payload });
+      }
+      return;
+    }
+
     if (msg.type === "playback") {
       const roomCode = clients.get(ws);
       const room = roomCode && rooms.get(roomCode);

@@ -11,10 +11,13 @@ App de Android TV para ver contenido en pareja a distancia, con un servidor WebS
   también mueve la posición en series y películas.
 
 ## Requisitos
-- Los dos televisores con **Tailscale** conectado a la misma red (el video va directo entre
-  ellos por Tailscale; el servidor de salas solo lleva los avisos).
-- El servidor de salas desplegado con la versión de `server/server.js` de esta rama
-  (mensajes `relay_share` y `relay_stop`).
+- Red para el video (se elige en la pantalla principal del equipo que comparte):
+  - **Wi-Fi local:** los dos equipos en la misma red de casa; sirve para probar.
+  - **Tailscale:** entre casas distintas, con Tailscale conectado en los dos.
+  - **Automática:** Tailscale si está conectado; si no, la red de casa.
+- El servidor de salas: funciona con la versión anterior (los avisos viajan por la
+  señalización WebRTC que ya reenvía), pero lo ideal es desplegar `server/server.js` de
+  esta versión, que entiende `relay_share` y `relay_stop` directamente.
 - En el televisor anfitrión, espacio libre para la caché: una película o episodio ocupa lo
   que pesa el archivo mientras se comparte.
 

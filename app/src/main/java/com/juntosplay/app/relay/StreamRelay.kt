@@ -41,7 +41,7 @@ import kotlin.concurrent.thread
 class StreamRelay(
     private val cacheDir: File,
     private val requestedPort: Int = DEFAULT_PORT,
-    private val userAgent: String = "TogetherPlay/0.3",
+    private val userAgent: String = USER_AGENT,
     private val log: (String) -> Unit = {}
 ) {
     /** Parte secreta de la URL; sin ella el relay responde 404. */
@@ -131,6 +131,9 @@ class StreamRelay(
     companion object {
         const val DEFAULT_PORT = 8765
 
+        /** Muchos proveedores IPTV rechazan agentes desconocidos; el de VLC casi siempre se acepta. */
+        const val USER_AGENT = "VLC/3.0.20 LibVLC/3.0.20"
+
         /** IP de Tailscale de este dispositivo (rango 100.64.0.0/10), o null si no hay. */
         fun tailscaleAddress(): String? {
             val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
@@ -142,6 +145,23 @@ class StreamRelay(
                 }
             }
             return null
+        }
+
+        /** IP de la red de casa (Wi-Fi o cable), sin contar Tailscale ni otras VPN. */
+        fun localAddress(): String? {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
+            var fallback: String? = null
+            for (ni in interfaces) {
+                if (!ni.isUp || ni.isLoopback) continue
+                val name = ni.name.lowercase()
+                if (name.startsWith("tun") || name.startsWith("tailscale") || name.startsWith("rmnet")) continue
+                for (addr in ni.inetAddresses) {
+                    if (addr !is Inet4Address || !addr.isSiteLocalAddress) continue
+                    if (name.startsWith("wlan") || name.startsWith("eth")) return addr.hostAddress
+                    if (fallback == null) fallback = addr.hostAddress
+                }
+            }
+            return fallback
         }
     }
 }
@@ -191,6 +211,12 @@ private fun head(status: String, headers: List<Pair<String, String>>): ByteArray
 private fun simpleResponse(code: Int, text: String): ByteArray =
     head("$code $text", listOf("Content-Length" to "0"))
 
+/** 503 (ExoPlayer no lo reintenta) con el motivo en X-Relay-Error, para que el reproductor lo muestre. */
+private fun relayError(reason: String): ByteArray {
+    val clean = reason.replace(Regex("[\\r\\n]+"), " ").take(300)
+    return head("503 Service Unavailable", listOf("Content-Length" to "0", "X-Relay-Error" to clean))
+}
+
 // ---------------------------------------------------------------------------
 // Conexión con el proveedor
 // ---------------------------------------------------------------------------
@@ -224,7 +250,13 @@ internal fun openUpstream(url: String, userAgent: String, rangeStart: Long?): Up
         }
         if (code != 200 && code != 206) {
             c.disconnect()
-            throw IOException("El proveedor respondió HTTP $code")
+            throw IOException(
+                when (code) {
+                    401, 403 -> "el proveedor rechazó la conexión (HTTP $code). ¿Hay otra app usando la cuenta ahora mismo?"
+                    404 -> "el proveedor no encontró ese contenido (HTTP 404)"
+                    else -> "el proveedor respondió HTTP $code"
+                }
+            )
         }
         return Upstream(c, c.inputStream)
     }
@@ -245,6 +277,8 @@ internal class LiveSource(
     private var pump: Thread? = null
     @Volatile private var upstream: Upstream? = null
     @Volatile private var closed = false
+    /** Motivo por el que el proveedor no entregó el canal. */
+    @Volatile private var failure: String? = null
 
     override fun serve(req: Request, out: OutputStream) {
         val headers = head("200 OK", listOf("Content-Type" to "video/mp2t", "Cache-Control" to "no-store"))
@@ -253,10 +287,20 @@ internal class LiveSource(
         synchronized(lock) {
             if (closed) throw IOException("cerrado")
             subscribers.add(queue)
-            if (pump == null) pump = thread(name = "relay-live", isDaemon = true) { pumpLoop() }
+            if (pump == null) {
+                failure = null
+                pump = thread(name = "relay-live", isDaemon = true) { pumpLoop() }
+            }
         }
         try {
+            // Se responde 200 solo cuando llega video; si el proveedor falla, el reproductor recibe el motivo.
+            val first = queue.poll(FIRST_DATA_TIMEOUT_S, TimeUnit.SECONDS)
+            if (first == null || first.isEmpty()) {
+                out.write(relayError(failure ?: "el canal no envió video en $FIRST_DATA_TIMEOUT_S segundos"))
+                return
+            }
             out.write(headers)
+            out.write(first)
             out.flush()
             var idleSeconds = 0
             while (!closed && idleSeconds < 30) {
@@ -277,6 +321,7 @@ internal class LiveSource(
 
     private fun pumpLoop() {
         var failures = 0
+        var everConnected = false
         val buf = ByteArray(CHUNK)
         while (true) {
             synchronized(lock) {
@@ -285,6 +330,7 @@ internal class LiveSource(
             var gotData = false
             try {
                 val up = openUpstream(url, userAgent, null)
+                everConnected = true
                 upstream = up
                 while (!closed && subscribers.isNotEmpty()) {
                     val n = readChunk(up.input, buf)
@@ -302,13 +348,15 @@ internal class LiveSource(
                     if (n < buf.size) break
                 }
             } catch (e: IOException) {
+                failure = e.message ?: e.javaClass.simpleName
                 if (!closed && subscribers.isNotEmpty()) log("Stream en vivo interrumpido: ${e.message}")
             } finally {
                 upstream?.close()
                 upstream = null
             }
             if (!gotData) failures++
-            if (failures >= MAX_FAILURES) {
+            // Si nunca se pudo abrir, se avisa pronto en vez de dejar la pantalla en negro.
+            if (failures >= (if (everConnected) MAX_FAILURES else FIRST_OPEN_TRIES)) {
                 log("No se pudo abrir el canal tras $failures intentos")
                 synchronized(lock) {
                     for (q in subscribers) { q.clear(); q.offer(ByteArray(0)) }
@@ -343,6 +391,8 @@ internal class LiveSource(
         const val CHUNK = 188 * 64          // ~12 KB
         const val QUEUE_CHUNKS = 1024       // ~12 MB de margen por espectador
         const val MAX_FAILURES = 8
+        const val FIRST_OPEN_TRIES = 3
+        const val FIRST_DATA_TIMEOUT_S = 25L
     }
 }
 
@@ -520,12 +570,14 @@ internal class VodSource(
                 val give = synchronized(lock) {
                     if (closed) return
                     failures++
-                    if (failures >= MAX_FAILURES) {
-                        error = "No se pudo descargar del proveedor: ${e.message}"
+                    // Si el archivo nunca se pudo abrir, se avisa pronto.
+                    val limit = if (headersKnown) MAX_FAILURES else FIRST_OPEN_TRIES
+                    if (failures >= limit) {
+                        error = e.message ?: "no se pudo descargar del proveedor"
                         idle = true
                         lock.notifyAll()
                     }
-                    failures >= MAX_FAILURES
+                    failures >= limit
                 }
                 log("Descarga interrumpida (${e.message})" + if (give) "" else ", reintentando")
                 if (!give) Thread.sleep(minOf(300L * failures, 2000L))
@@ -585,8 +637,9 @@ internal class VodSource(
                 }
             }
             if (!headersKnown) {
+                val reason = error ?: "el proveedor no respondió a tiempo"
                 error = null
-                out.write(simpleResponse(502, "Bad Gateway"))
+                out.write(relayError(reason))
                 return
             }
             t = total
@@ -659,5 +712,6 @@ internal class VodSource(
         const val MAX_AHEAD = 256L * 1024 * 1024   // máximo adelantado respecto a lo que se ve
         const val RECONNECT_PAUSE_MS = 300L
         const val MAX_FAILURES = 10
+        const val FIRST_OPEN_TRIES = 3
     }
 }

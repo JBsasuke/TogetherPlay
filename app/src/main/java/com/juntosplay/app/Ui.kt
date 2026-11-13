@@ -121,6 +121,47 @@ object Ui {
         }
     }
 
+    /** Fila de opciones donde solo una queda elegida (resaltada con el degradado). */
+    fun chipGroup(c: Context, options: List<Pair<String, String>>, initial: String, onSelect: (String) -> Unit): LinearLayout {
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        val chips = ArrayList<TextView>()
+        var selected = initial
+        val r = dp(c, 100).toFloat()
+        fun paint(chip: TextView) {
+            val isSelected = chip.tag == selected
+            chip.background = when {
+                isSelected -> gradient(r, if (chip.isFocused) dp(c, 3) else 0, Color.WHITE)
+                chip.isFocused -> round(surfaceHigh, r, dp(c, 2), cyan)
+                else -> round(surfaceHigh, r, dp(c, 1), outline)
+            }
+            chip.setTextColor(if (isSelected || chip.isFocused) text else muted)
+        }
+        options.forEachIndexed { index, (key, label) ->
+            val chip = TextView(c).apply {
+                text = label
+                tag = key
+                textSize = 15f
+                gravity = Gravity.CENTER
+                typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                setPadding(dp(c, 18), dp(c, 10), dp(c, 18), dp(c, 10))
+                isFocusable = true
+                isClickable = true
+            }
+            chip.setOnFocusChangeListener { _, _ -> paint(chip) }
+            chip.setOnClickListener {
+                selected = key
+                chips.forEach { paint(it) }
+                onSelect(key)
+            }
+            chips.add(chip)
+            paint(chip)
+            row.addView(chip, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                if (index > 0) leftMargin = dp(c, 10)
+            })
+        }
+        return row
+    }
+
     fun matchWrap(bottomMargin: Int = 0, topMargin: Int = 0): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
             this.bottomMargin = bottomMargin

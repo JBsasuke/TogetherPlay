@@ -133,9 +133,30 @@ class MainActivity : Activity() {
         watchCard.addView(Ui.sectionTitle(this, "Ver juntos"))
         watchCard.addView(Ui.label(this, "Comparte tu IPTV", 20f, bold = true), Ui.matchWrap(bottomMargin = dp(6)))
         watchCard.addView(
-            Ui.label(this, "Elige un canal, película o episodio. Se abre aquí y en el otro televisor con una sola conexión al proveedor. Los dos televisores necesitan Tailscale.", 14f, Ui.muted),
-            Ui.matchWrap(bottomMargin = dp(16))
+            Ui.label(this, "Elige un canal, película o episodio. Se abre aquí y en el otro televisor con una sola conexión al proveedor.", 14f, Ui.muted),
+            Ui.matchWrap(bottomMargin = dp(18))
         )
+        watchCard.addView(Ui.label(this, "Red para el video", 14f, Ui.muted), Ui.matchWrap(bottomMargin = dp(8)))
+        val modeHelp = Ui.label(this, "", 13f, Ui.hint)
+        fun describeMode(mode: String) = when (mode) {
+            NetworkMode.WIFI -> "Los dos equipos en el mismo Wi-Fi o cable. Ideal para probar en casa."
+            NetworkMode.TAILSCALE -> "Entre casas distintas. Los dos equipos con Tailscale conectado."
+            else -> "Usa Tailscale si está conectado; si no, el Wi-Fi de la casa."
+        }
+        val savedMode = prefs.getString(NetworkMode.PREF, NetworkMode.AUTO) ?: NetworkMode.AUTO
+        modeHelp.text = describeMode(savedMode)
+        watchCard.addView(
+            Ui.chipGroup(
+                this,
+                listOf(NetworkMode.AUTO to "Automática", NetworkMode.WIFI to "Wi-Fi local", NetworkMode.TAILSCALE to "Tailscale"),
+                savedMode
+            ) { mode ->
+                prefs.edit().putString(NetworkMode.PREF, mode).apply()
+                modeHelp.text = describeMode(mode)
+            },
+            if (wide) LinearLayout.LayoutParams(Ui.dp(this, 560), wrap).apply { bottomMargin = dp(8) } else Ui.matchWrap(bottomMargin = dp(8))
+        )
+        watchCard.addView(modeHelp, Ui.matchWrap(bottomMargin = dp(18)))
         val shareButton = Ui.button(this, "Compartir desde mi IPTV") {
             if (roomClient == null) toast("Conecta primero con el servidor y entra en una sala.")
             else startActivity(Intent(this, ShareActivity::class.java))

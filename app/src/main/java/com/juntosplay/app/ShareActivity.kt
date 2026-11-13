@@ -35,6 +35,9 @@ class ShareActivity : Activity() {
     private val http = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        .addInterceptor { chain ->
+            chain.proceed(chain.request().newBuilder().header("User-Agent", StreamRelay.USER_AGENT).build())
+        }
         .build()
 
     private class Item(val label: String, val data: JSONObject)
@@ -328,8 +331,14 @@ class ShareActivity : Activity() {
         val appContext = applicationContext
         thread {
             try {
-                val host = StreamRelay.tailscaleAddress()
-                    ?: throw IOException("no encuentro Tailscale; ábrelo y conéctalo en este televisor")
+                val host = when (prefs.getString(NetworkMode.PREF, NetworkMode.AUTO)) {
+                    NetworkMode.TAILSCALE -> StreamRelay.tailscaleAddress()
+                        ?: throw IOException("no encuentro Tailscale; ábrelo y conéctalo en este equipo")
+                    NetworkMode.WIFI -> StreamRelay.localAddress()
+                        ?: throw IOException("no encuentro la red Wi-Fi o de cable de este equipo")
+                    else -> StreamRelay.tailscaleAddress() ?: StreamRelay.localAddress()
+                        ?: throw IOException("no encuentro ni Tailscale ni la red Wi-Fi de este equipo")
+                }
                 val relay = RoomSession.relay(appContext)
                 relay.start()
                 if (kind == "live") relay.shareLive(upstreamUrl) else relay.shareVod(upstreamUrl)

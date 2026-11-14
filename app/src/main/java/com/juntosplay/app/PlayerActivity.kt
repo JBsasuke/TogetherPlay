@@ -26,6 +26,8 @@ import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -54,6 +56,9 @@ class PlayerActivity : Activity() {
     /** Mientras se aplica una orden remota, los cambios locales no se reenvían. */
     private var ignoreLocalUntil = 0L
     private val handler = Handler(Looper.getMainLooper())
+    private var trackSelector: DefaultTrackSelector? = null
+    /** Reintentos automáticos cuando el equipo no puede decodificar el video (p. ej. 4K/HDR). */
+    private var decodeFallbackStep = 0
     private lateinit var syncButton: TextView
     /** Este equipo pidió sincronizar y espera a que el otro esté listo en el mismo punto. */
     private var leadingSync = false
@@ -141,7 +146,16 @@ class PlayerActivity : Activity() {
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(30_000, 120_000, 2_500, 5_000)
             .build()
-        val p = ExoPlayer.Builder(this)
+        // Si el decodificador por hardware falla, se prueba otro; los audios que el equipo no
+        // trae (DTS, TrueHD, AC3...) se decodifican con FFmpeg dentro de la app.
+        val renderers = DefaultRenderersFactory(this)
+            .setEnableDecoderFallback(true)
+            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        val selector = DefaultTrackSelector(this)
+        trackSelector = selector
+        decodeFallbackStep = 0
+        val p = ExoPlayer.Builder(this, renderers)
+            .setTrackSelector(selector)
             .setMediaSourceFactory(DefaultMediaSourceFactory(this).setDataSourceFactory(http))
             .setLoadControl(loadControl)
             .build()
@@ -187,6 +201,7 @@ class PlayerActivity : Activity() {
                     p.prepare()
                     return
                 }
+                if (tryDecodeFallback(p, error)) return
                 val message = describe(error)
                 showError(message)
                 appendProviderInfo(message)
@@ -253,6 +268,51 @@ class PlayerActivity : Activity() {
         if (::errorBox.isInitialized) errorBox.visibility = View.GONE
     }
 
+    /**
+     * Si falla la decodificación, se reintenta solo: primero en 1080p con H.264/HEVC normal
+     * (sin Dolby Vision), después en 720p con H.264. Devuelve true si se reintentó.
+     */
+    private fun tryDecodeFallback(p: ExoPlayer, error: PlaybackException): Boolean {
+        val decodeErrors = setOf(
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED
+        )
+        val selector = trackSelector ?: return false
+        if (error.errorCode !in decodeErrors || decodeFallbackStep >= 2) return false
+        decodeFallbackStep++
+        val builder = selector.buildUponParameters().setExceedRendererCapabilitiesIfNecessary(false)
+        if (decodeFallbackStep == 1) {
+            builder.setMaxVideoSize(1920, 1080)
+                .setPreferredVideoMimeTypes(MimeTypes.VIDEO_H265, MimeTypes.VIDEO_H264)
+            toast("Este equipo no pudo con esa calidad: probando en 1080p…")
+        } else {
+            builder.setMaxVideoSize(1280, 720)
+                .setPreferredVideoMimeTypes(MimeTypes.VIDEO_H264)
+            toast("Probando en 720p…")
+        }
+        selector.parameters = builder.build()
+        val position = p.currentPosition
+        ignoreLocal(2000)
+        p.prepare()
+        if (kind == "vod" && position > 0) p.seekTo(position)
+        p.playWhenReady = true
+        return true
+    }
+
+    /** Qué formato estaba reproduciendo (sirve para saber por qué falló). */
+    private fun formatsLine(): String {
+        val p = player ?: return ""
+        val v = p.videoFormat
+        val a = p.audioFormat
+        val parts = ArrayList<String>()
+        if (v != null) parts.add("Video: ${v.sampleMimeType ?: v.codecs ?: "?"} ${if (v.width > 0) "${v.width}x${v.height}" else ""}".trim())
+        if (a != null) parts.add("Audio: ${a.sampleMimeType ?: a.codecs ?: "?"}")
+        return parts.joinToString(" · ")
+    }
+
     /** Explica el error en palabras, con el detalle técnico al final. */
     private fun describe(error: PlaybackException): String {
         val causes = generateSequence(error.cause) { it.cause }.toList()
@@ -281,9 +341,11 @@ class PlayerActivity : Activity() {
                 PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED ->
                     "Lo que llegó del proveedor no se reconoce como video."
                 PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+                PlaybackException.ERROR_CODE_DECODING_FAILED,
                 PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
                 PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ->
-                    "Este equipo no puede decodificar ese video."
+                    "Este equipo no puede decodificar ese video, ni siquiera en menor calidad. " +
+                        "Suele pasar con películas 4K HDR o Dolby Vision: prueba otra versión de la película."
                 PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW ->
                     "El canal en vivo se atrasó demasiado. Pulsa Reintentar."
                 else -> "Ocurrió un error al reproducir."
@@ -293,6 +355,7 @@ class PlayerActivity : Activity() {
         return buildString {
             append(message)
             append("\n\n").append(error.errorCodeName)
+            formatsLine().takeIf { it.isNotBlank() }?.let { append("\n").append(it) }
             val parsing = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
             if (!detail.isNullOrBlank() && http == null && !parsing) append(" · ").append(detail)
         }

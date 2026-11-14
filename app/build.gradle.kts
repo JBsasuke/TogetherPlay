@@ -13,8 +13,8 @@ android {
         applicationId = "com.juntosplay.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.6.1"
+        versionCode = 8
+        versionName = "0.7.0"
         // Solo ARM (TV y teléfonos): el APK pesa bastante menos.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
@@ -67,6 +67,11 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-datasource:1.4.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
+    // Audio DTS/TrueHD/AC3 por software cuando el equipo no lo trae.
+    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.4.1+1")
+    // Pósters y logos.
+    implementation("io.coil-kt:coil:2.7.0")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("io.github.webrtc-sdk:android:150.7871.04")
     implementation("com.google.zxing:core:3.5.3")
     // Tailscale integrado: AAR hecho con gomobile desde tailscale/ (lo genera la compilación de GitHub).

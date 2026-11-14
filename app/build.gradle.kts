@@ -13,8 +13,8 @@ android {
         applicationId = "com.juntosplay.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.7.0"
+        versionCode = 9
+        versionName = "0.7.1"
         // Solo ARM (TV y teléfonos): el APK pesa bastante menos.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }
@@ -49,7 +49,13 @@ android {
     }
     buildTypes {
         getByName("debug") { if (fixedKey != null) signingConfig = fixedKey }
-        getByName("release") { if (fixedKey != null) signingConfig = fixedKey }
+        getByName("release") {
+            if (fixedKey != null) signingConfig = fixedKey
+            // Ofuscación y reducción del código con R8 (solo en release).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
     }
 
     compileOptions {

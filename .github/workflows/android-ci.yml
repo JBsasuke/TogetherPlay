@@ -59,7 +59,7 @@ jobs:
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-        run: gradle --no-daemon :app:assembleDebug
+        run: gradle --no-daemon :app:assembleDebug :app:assembleRelease
       - name: Show signing certificate
         run: |
           SIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | tail -1)
@@ -79,8 +79,10 @@ jobs:
         run: |
           VERSION=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           TAG="v${VERSION}-${GITHUB_RUN_NUMBER}"
-          cp app/build/outputs/apk/debug/*.apk "TogetherPlay-${VERSION}.apk"
+          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          [ -z "$APK" ] && APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          cp "$APK" "TogetherPlay-${VERSION}.apk"
           gh release create "$TAG" "TogetherPlay-${VERSION}.apk" app/libs/tsbridge.aar \
             --title "TogetherPlay ${VERSION} (compilación ${GITHUB_RUN_NUMBER})" \
-            --notes "APK firmado, sin servidor puesto: escribe el tuyo en la app. tsbridge.aar: Tailscale integrado para compilar en Android Studio (cópialo en app/libs)." \
+            --notes "APK firmado y ofuscado (release), sin servidor puesto: escribe el tuyo en la app. tsbridge.aar: Tailscale integrado para compilar en Android Studio (cópialo en app/libs)." \
             --latest

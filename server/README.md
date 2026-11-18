@@ -20,7 +20,9 @@ No uses `ws://` sin TLS en producción. Configura HTTPS/WSS en el proveedor o me
 ## Limitaciones actuales
 - Las salas viven en memoria; se pierden al reiniciar el servidor.
 - Código de sala aleatorio, sin cuentas ni autenticación todavía.
-- Límite de dos dispositivos por sala.
+- La sala estándar admite dos equipos y permite compartir la captura de pantalla.
+- Multisala admite hasta cinco equipos en total para compartir canales, películas y series.
+  Para usarla, despliega el servidor actualizado en la dirección configurada en TogetherPlay.
 - Solo retransmite eventos de control; no transmite video.
 - No usar con contenido protegido/DRM para intentar eludir restricciones.
 - Añadir límites de frecuencia, expiración de salas, autenticación, autorización y observabilidad antes de producción.

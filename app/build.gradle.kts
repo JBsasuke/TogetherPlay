@@ -23,7 +23,9 @@ android {
     // En GitHub viene de los secretos (KEYSTORE_*); en la computadora, de keystore.properties (no se sube).
     // Servidor propio: sale de togetherplay.properties (en tu PC, no se sube a GitHub).
     // Sin ese archivo la app sale sin servidor y cada quien escribe el suyo.
-    val localServer = rootProject.file("togetherplay.properties").takeIf { it.exists() }?.let { f ->
+    val localServer = rootProject.file("togetherplay.properties").takeIf {
+        System.getenv("GITHUB_ACTIONS") != "true" && it.isFile
+    }?.let { f ->
         Properties().apply { f.inputStream().use { load(it) } }
     }
     fun quoted(v: String?) = "\"" + (v ?: "").replace("\\", "\\\\").replace("\"", "\\\"") + "\""

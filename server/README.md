@@ -17,6 +17,15 @@ Despliega este servicio en un hosting público que admita WebSockets y TLS. Desp
 
 No uses `ws://` sin TLS en producción. Configura HTTPS/WSS en el proveedor o mediante un proxy TLS.
 
+## Activar Trakt en los televisores
+
+Registra una aplicación con acceso de inicio de sesión en [Trakt Developer](https://developer.trakt.tv/docs/create-an-app). Configura dos variables de entorno en el servicio de TogetherPlay:
+
+- `TRAKT_CLIENT_ID`: ID público de la aplicación registrada.
+- `TRAKT_REDIRECT_URI`: URL HTTPS autorizada para esa aplicación. Respeta la dirección exacta que registraste en Trakt.
+
+El endpoint `/trakt/config` entrega solo esos valores públicos. Los televisores solicitan el código a Trakt y guardan la autorización en el equipo que se vincula. El servidor de salas no recibe los tokens de las cuentas.
+
 ## Limitaciones actuales
 - Las salas viven en memoria; se pierden al reiniciar el servidor.
 - Código de sala aleatorio, sin cuentas ni autenticación todavía.

@@ -5,18 +5,42 @@ const { once } = require("node:events");
 const path = require("node:path");
 const WebSocket = require("ws");
 
-test("Multisala admits five members and keeps the standard room at two", { timeout: 10000 }, async t => {
+async function startServer(t, env = {}) {
   const server = spawn(process.execPath, [path.join(__dirname, "server.js")], {
-    env: { ...process.env, HOST: "127.0.0.1", PORT: "0" },
+    env: { ...process.env, HOST: "127.0.0.1", PORT: "0",
+      TRAKT_CLIENT_ID: "", TRAKT_REDIRECT_URI: "", ...env },
   });
-  const peers = [];
-  t.after(() => {
-    peers.forEach(peer => peer.ws.terminate());
-    server.kill();
-  });
+  t.after(() => server.kill());
   const [data] = await once(server.stdout, "data");
   const port = String(data).match(/port (\d+)/)?.[1];
   assert.ok(port);
+  return port;
+}
+
+test("Trakt configuration is optional and exposes only public registration fields", { timeout: 10000 }, async t => {
+  const unconfigured = await startServer(t);
+  const absent = await fetch(`http://127.0.0.1:${unconfigured}/trakt/config`);
+  assert.equal(absent.status, 503);
+  assert.deepEqual(await absent.json(), { error: "trakt_not_configured" });
+
+  const configured = await startServer(t, {
+    TRAKT_CLIENT_ID: "example-client-id",
+    TRAKT_REDIRECT_URI: "https://example.org/trakt/callback",
+    TRAKT_CLIENT_SECRET: "must-not-appear-in-the-response",
+  });
+  const response = await fetch(`http://127.0.0.1:${configured}/trakt/config`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    client_id: "example-client-id",
+    redirect_uri: "https://example.org/trakt/callback",
+  });
+});
+
+test("Multisala admits five members and keeps the standard room at two", { timeout: 10000 }, async t => {
+  const peers = [];
+  t.after(() => peers.forEach(peer => peer.ws.terminate()));
+  const port = await startServer(t);
 
   async function connect() {
     const ws = new WebSocket(`ws://127.0.0.1:${port}`);

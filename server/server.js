@@ -5,11 +5,32 @@ const crypto = require("crypto");
 const PORT = Number(process.env.PORT || 8080);
 const STANDARD_CAPACITY = 2;
 const MULTI_CAPACITY = 5;
+const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID?.trim();
+const TRAKT_REDIRECT_URI = process.env.TRAKT_REDIRECT_URI?.trim();
 
+function traktConfig() {
+  if (!TRAKT_CLIENT_ID || !TRAKT_REDIRECT_URI) return null;
+  try {
+    const uri = new URL(TRAKT_REDIRECT_URI);
+    if (uri.protocol !== "https:" || uri.username || uri.password || uri.hash) return null;
+    return { client_id: TRAKT_CLIENT_ID, redirect_uri: TRAKT_REDIRECT_URI };
+  } catch {
+    return null;
+  }
+}
+
+const trakt = traktConfig();
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "content-type": "application/json" });
     return res.end(JSON.stringify({ ok: true, service: "TogetherPlay room server" }));
+  }
+  if (req.url === "/trakt/config" && req.method === "GET") {
+    res.writeHead(trakt ? 200 : 503, {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+    });
+    return res.end(JSON.stringify(trakt ?? { error: "trakt_not_configured" }));
   }
   res.writeHead(404);
   res.end("Not found");

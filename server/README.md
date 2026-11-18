@@ -19,10 +19,9 @@ No uses `ws://` sin TLS en producción. Configura HTTPS/WSS en el proveedor o me
 
 ## Activar Trakt en los televisores
 
-Registra una aplicación con acceso de inicio de sesión en [Trakt Developer](https://developer.trakt.tv/docs/create-an-app). Configura dos variables de entorno en el servicio de TogetherPlay:
+Registra una aplicación con acceso de inicio de sesión en [Trakt Developer](https://developer.trakt.tv/docs/create-an-app). Como URL de redirección, usa la dirección HTTPS de tu servicio de Render terminada en `/health`. En **Environment** de tu servicio guarda el Client ID de Trakt en `TRAKT_CLIENT_ID` y despliega el servicio.
 
-- `TRAKT_CLIENT_ID`: ID público de la aplicación registrada.
-- `TRAKT_REDIRECT_URI`: URL HTTPS autorizada para esa aplicación. Respeta la dirección exacta que registraste en Trakt.
+Render proporciona automáticamente la URL del servicio. Si ya registraste otra URL HTTPS o alojas el servidor fuera de Render, configura `TRAKT_REDIRECT_URI` con la dirección exacta que registraste en Trakt.
 
 El endpoint `/trakt/config` entrega solo esos valores públicos. Los televisores solicitan el código a Trakt y guardan la autorización en el equipo que se vincula. El servidor de salas no recibe los tokens de las cuentas.
 

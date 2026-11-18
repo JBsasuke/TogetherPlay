@@ -7,13 +7,17 @@ const STANDARD_CAPACITY = 2;
 const MULTI_CAPACITY = 5;
 const TRAKT_CLIENT_ID = process.env.TRAKT_CLIENT_ID?.trim();
 const TRAKT_REDIRECT_URI = process.env.TRAKT_REDIRECT_URI?.trim();
+const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL?.trim();
 
 function traktConfig() {
-  if (!TRAKT_CLIENT_ID || !TRAKT_REDIRECT_URI) return null;
+  if (!TRAKT_CLIENT_ID) return null;
   try {
-    const uri = new URL(TRAKT_REDIRECT_URI);
+    const redirect = TRAKT_REDIRECT_URI ||
+      (RENDER_EXTERNAL_URL && new URL("/health", RENDER_EXTERNAL_URL).href);
+    if (!redirect) return null;
+    const uri = new URL(redirect);
     if (uri.protocol !== "https:" || uri.username || uri.password || uri.hash) return null;
-    return { client_id: TRAKT_CLIENT_ID, redirect_uri: TRAKT_REDIRECT_URI };
+    return { client_id: TRAKT_CLIENT_ID, redirect_uri: redirect };
   } catch {
     return null;
   }

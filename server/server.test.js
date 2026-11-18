@@ -8,7 +8,7 @@ const WebSocket = require("ws");
 async function startServer(t, env = {}) {
   const server = spawn(process.execPath, [path.join(__dirname, "server.js")], {
     env: { ...process.env, HOST: "127.0.0.1", PORT: "0",
-      TRAKT_CLIENT_ID: "", TRAKT_REDIRECT_URI: "", ...env },
+      TRAKT_CLIENT_ID: "", TRAKT_REDIRECT_URI: "", RENDER_EXTERNAL_URL: "", ...env },
   });
   t.after(() => server.kill());
   const [data] = await once(server.stdout, "data");
@@ -26,6 +26,7 @@ test("Trakt configuration is optional and exposes only public registration field
   const configured = await startServer(t, {
     TRAKT_CLIENT_ID: "example-client-id",
     TRAKT_REDIRECT_URI: "https://example.org/trakt/callback",
+    RENDER_EXTERNAL_URL: "https://example.onrender.com",
     TRAKT_CLIENT_SECRET: "must-not-appear-in-the-response",
   });
   const response = await fetch(`http://127.0.0.1:${configured}/trakt/config`);
@@ -34,6 +35,19 @@ test("Trakt configuration is optional and exposes only public registration field
   assert.deepEqual(await response.json(), {
     client_id: "example-client-id",
     redirect_uri: "https://example.org/trakt/callback",
+  });
+});
+
+test("Render can provide the Trakt redirect URL automatically", { timeout: 10000 }, async t => {
+  const port = await startServer(t, {
+    TRAKT_CLIENT_ID: "example-client-id",
+    RENDER_EXTERNAL_URL: "https://example.onrender.com",
+  });
+  const response = await fetch(`http://127.0.0.1:${port}/trakt/config`);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), {
+    client_id: "example-client-id",
+    redirect_uri: "https://example.onrender.com/health",
   });
 });
 

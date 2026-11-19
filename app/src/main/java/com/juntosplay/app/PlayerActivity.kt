@@ -31,10 +31,12 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.juntosplay.app.relay.XtreamAccount
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
+import java.util.concurrent.Executors
 import kotlin.concurrent.thread
 import kotlin.math.abs
 
@@ -46,6 +48,7 @@ import kotlin.math.abs
 class PlayerActivity : Activity() {
     private var player: ExoPlayer? = null
     private lateinit var playerView: PlayerView
+    private lateinit var rootView: FrameLayout
     private lateinit var errorBox: LinearLayout
     private lateinit var errorText: TextView
     private var isHost = false
@@ -56,6 +59,12 @@ class PlayerActivity : Activity() {
     /** Mientras se aplica una orden remota, los cambios locales no se reenvían. */
     private var ignoreLocalUntil = 0L
     private val handler = Handler(Looper.getMainLooper())
+    private val remoteListener: (JSONObject) -> Unit = { msg -> onRemote(msg) }
+    /** Guía de canales estilo TiviMate: solo en el equipo que comparte un canal de su cuenta IPTV. */
+    private var liveTv: LiveTv? = null
+    private var switchSeq = 0
+    /** Los cambios de canal se hacen de uno en uno: dos a la vez serían dos conexiones al proveedor. */
+    private val switcher = Executors.newSingleThreadExecutor()
     private var trackSelector: DefaultTrackSelector? = null
     /** Reintentos automáticos cuando el equipo no puede decodificar el video (p. ej. 4K/HDR). */
     private var decodeFallbackStep = 0
@@ -79,6 +88,7 @@ class PlayerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        rootView = root
         playerView = PlayerView(this).apply {
             setBackgroundColor(Color.BLACK)
             keepScreenOn = true
@@ -110,11 +120,11 @@ class PlayerActivity : Activity() {
             FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END
         ).apply { val m = Ui.dp(this@PlayerActivity, 20); setMargins(m, m, m, m) })
         playerView.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
-            syncButton.visibility = visibility
+            syncButton.visibility = if (liveTv != null) View.GONE else visibility
         })
         setContentView(root)
         handler.postDelayed(ticker, TICK_MS)
-        RoomSession.playbackListener = { msg -> onRemote(msg) }
+        RoomSession.playbackListener = remoteListener
         load(intent)
     }
 
@@ -124,17 +134,21 @@ class PlayerActivity : Activity() {
         load(intent)
     }
 
-    private fun load(intent: Intent) {
+    private fun load(intent: Intent, quiet: Boolean = false) {
         val newUrl = intent.getStringExtra(EXTRA_URL)
         if (newUrl.isNullOrBlank()) { finish(); return }
         // Al reconectarse la sala llega el mismo aviso otra vez: si ya se está viendo, no se reinicia.
         if (newUrl == sourceUrl && player != null && errorBox.visibility != View.VISIBLE) return
+        setIntent(intent)
         sourceUrl = newUrl
         url = TailnetBridge.rewriteForPlayback(newUrl)
         isHost = intent.getBooleanExtra(EXTRA_HOST, false)
         kind = intent.getStringExtra(EXTRA_KIND) ?: "vod"
         val title = intent.getStringExtra(EXTRA_TITLE).orEmpty()
-        if (title.isNotBlank()) toast(if (isHost) "Compartiendo: $title" else "Viendo juntos: $title")
+        setupLiveTv(intent, title)
+        if (title.isNotBlank() && !quiet && liveTv == null) {
+            toast(if (isHost) "Compartiendo: $title" else "Viendo juntos: $title")
+        }
         hideError()
 
         player?.release()
@@ -216,6 +230,73 @@ class PlayerActivity : Activity() {
         p.prepare()
     }
 
+    // --- guía de canales (IPTV) ---
+
+    private fun xtreamAccount(): XtreamAccount? {
+        val prefs = RoomSession.prefs(this)
+        val server = prefs.getString("xtream_server", "").orEmpty()
+        val user = prefs.getString("xtream_user", "").orEmpty()
+        val pass = prefs.getString("xtream_pass", "").orEmpty()
+        return if (server.isBlank() || user.isBlank()) null else XtreamAccount(server, user, pass)
+    }
+
+    private fun setupLiveTv(intent: Intent, title: String) {
+        val streamId = intent.getIntExtra(EXTRA_STREAM_ID, 0)
+        val acc = if (isHost && kind == "live" && streamId > 0) xtreamAccount() else null
+        if (acc == null) {
+            liveTv?.release()
+            liveTv = null
+        } else {
+            val tv = liveTv ?: LiveTv(
+                activity = this,
+                root = rootView,
+                playerView = playerView,
+                account = acc,
+                player = { player },
+                onPlay = { ch -> switchChannel(ch) },
+                onSync = { requestSync() },
+                onExit = { finish() }
+            ).also { liveTv = it }
+            tv.setPlaying(streamId, intent.getStringExtra(EXTRA_CATEGORY).orEmpty(), title)
+        }
+        // Con la guía, el control remoto maneja la guía; sin ella, los controles normales del reproductor.
+        playerView.useController = liveTv == null
+        if (liveTv != null) {
+            playerView.hideController()
+            syncButton.visibility = View.GONE
+        }
+    }
+
+    /** Cambia de canal sin salir del reproductor: suelta el anterior, abre el nuevo y avisa al otro equipo. */
+    private fun switchChannel(ch: LiveTv.Channel) {
+        val acc = xtreamAccount() ?: return
+        val seq = ++switchSeq
+        hideError()
+        ignoreLocal(4000)
+        // El reproductor deja de pedirle video al relay antes de cambiar de canal.
+        player?.stop()
+        val appContext = applicationContext
+        switcher.execute {
+            if (seq != switchSeq || released) return@execute
+            try {
+                val p = Sharing.prepareUrl(appContext, acc.liveUrl(ch.id), live = true, title = ch.name)
+                // La marca ?ch= hace que el otro equipo vea que es otro canal (el relay la ignora).
+                val tag = "ch=${ch.id}-${SystemClock.elapsedRealtime() % 1_000_000}"
+                val tagged = p.copy(localUrl = "${p.localUrl}?$tag", remoteUrl = "${p.remoteUrl}?$tag")
+                runOnUiThread {
+                    if (seq != switchSeq || released) return@runOnUiThread
+                    Sharing.announce(tagged)
+                    load(intent(this, tagged.localUrl, tagged.kind, ch.name, host = true,
+                        streamId = ch.id, categoryId = ch.categoryId), quiet = true)
+                }
+            } catch (e: Throwable) {
+                runOnUiThread {
+                    if (seq == switchSeq && !released) showError("No se pudo abrir ${ch.name}: ${e.message ?: e.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
     private fun retry() {
         val p = player ?: return
         hideError()
@@ -226,14 +307,17 @@ class PlayerActivity : Activity() {
     private fun showError(message: String) {
         errorText.text = message
         playerView.hideController()
+        liveTv?.hide()
         errorBox.visibility = View.VISIBLE
+        errorBox.bringToFront()
         errorBox.getChildAt(2)?.requestFocus()
     }
 
     /** Pide al relay qué respondió el proveedor y lo añade al mensaje (sirve para diagnosticar). */
     private fun appendProviderInfo(message: String) {
-        val infoUrl = url.replace(Regex("/stream(\\.m3u8)?$"), "/info")
-        if (infoUrl == url) return
+        val bare = url.substringBefore('?')
+        val infoUrl = bare.replace(Regex("/stream(\\.m3u8)?$"), "/info")
+        if (infoUrl == bare) return
         thread {
             val line = try {
                 val c = URL(infoUrl).openConnection() as HttpURLConnection
@@ -491,6 +575,24 @@ class PlayerActivity : Activity() {
             if (event.action == KeyEvent.ACTION_UP) requestSync()
             return true
         }
+        liveTv?.let { tv ->
+            if (tv.onKey(event)) return true
+            if (tv.isInteractive) return super.dispatchKeyEvent(event)
+            // Sin controles en pantalla: play/pausa directo con los botones del control remoto.
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> {
+                    if (event.action == KeyEvent.ACTION_UP) player?.let { p ->
+                        p.playWhenReady = when (event.keyCode) {
+                            KeyEvent.KEYCODE_MEDIA_PLAY -> true
+                            KeyEvent.KEYCODE_MEDIA_PAUSE -> false
+                            else -> !p.playWhenReady
+                        }
+                    }
+                    return true
+                }
+            }
+            return super.dispatchKeyEvent(event)
+        }
         if (syncButton.hasFocus()) return super.dispatchKeyEvent(event)
         return playerView.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
     }
@@ -511,9 +613,24 @@ class PlayerActivity : Activity() {
         if (hasFocus) Ui.hideSystemBars(this)
     }
 
-    override fun onDestroy() {
+    override fun onPause() {
+        super.onPause()
+        // Al salir del reproductor se suelta todo YA (no cuando Android destruya la pantalla, que
+        // puede tardar segundos): si no, al abrir una película el canal seguía conectado y el
+        // proveedor veía dos conexiones.
+        if (isFinishing) releaseAll()
+    }
+
+    private var released = false
+
+    private fun releaseAll() {
+        if (released) return
+        released = true
         handler.removeCallbacksAndMessages(null)
-        RoomSession.playbackListener = null
+        if (RoomSession.playbackListener === remoteListener) RoomSession.playbackListener = null
+        liveTv?.release()
+        switchSeq++
+        switcher.shutdown()
         player?.release()
         player = null
         if (isHost) {
@@ -525,6 +642,10 @@ class PlayerActivity : Activity() {
                 if (RoomSession.currentShare == null) RoomSession.relay(appContext).stopSharing()
             }
         }
+    }
+
+    override fun onDestroy() {
+        releaseAll()
         super.onDestroy()
     }
 
@@ -536,11 +657,17 @@ class PlayerActivity : Activity() {
         private const val EXTRA_TITLE = "title"
         private const val EXTRA_HOST = "host"
         private const val EXTRA_START = "start_ms"
+        private const val EXTRA_STREAM_ID = "stream_id"
+        private const val EXTRA_CATEGORY = "category_id"
         private const val TICK_MS = 10_000L
         /** Tiempo aproximado que tarda un mensaje en llegar al otro equipo. */
         private const val TRANSIT_MS = 150L
 
-        fun intent(context: Context, url: String, kind: String, title: String, host: Boolean, startMs: Long = 0L): Intent =
+        /** [streamId] y [categoryId]: canal en vivo de la cuenta IPTV (activa la guía de canales). */
+        fun intent(
+            context: Context, url: String, kind: String, title: String, host: Boolean, startMs: Long = 0L,
+            streamId: Int = 0, categoryId: String = ""
+        ): Intent =
             Intent(context, PlayerActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(EXTRA_URL, url)
@@ -548,5 +675,7 @@ class PlayerActivity : Activity() {
                 .putExtra(EXTRA_TITLE, title)
                 .putExtra(EXTRA_HOST, host)
                 .putExtra(EXTRA_START, startMs)
+                .putExtra(EXTRA_STREAM_ID, streamId)
+                .putExtra(EXTRA_CATEGORY, categoryId)
     }
 }

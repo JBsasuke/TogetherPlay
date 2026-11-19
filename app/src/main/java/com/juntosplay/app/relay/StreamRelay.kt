@@ -99,6 +99,9 @@ class StreamRelay(
         agent: String = userAgent,
         headers: Map<String, String> = emptyMap()
     ): String {
+        // Primero se suelta lo que se estaba compartiendo (p. ej. un canal en vivo): con cuentas
+        // de una sola conexión, abrir la película antes de cerrar el canal bloquea la cuenta.
+        if (closeCurrentSource()) Thread.sleep(REOPEN_PAUSE_MS)
         var last: IOException? = null
         for (attempt in 0 until 2) {
             try {
@@ -171,6 +174,14 @@ class StreamRelay(
 
     /** Deja de compartir y libera la conexión con el proveedor. */
     fun stopSharing() = replaceSource(null, isHls = false)
+
+    /** Cierra la fuente actual. Devuelve true si había una (y por lo tanto una conexión que soltar). */
+    @Synchronized
+    private fun closeCurrentSource(): Boolean {
+        if (source == null) return false
+        replaceSource(null, isHls = false)
+        return true
+    }
 
     @Synchronized
     private fun replaceSource(next: Source?, isHls: Boolean = false) {

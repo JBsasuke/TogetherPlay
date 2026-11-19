@@ -351,7 +351,9 @@ class ShareActivity : Activity() {
 
     private fun open(kind: String, item: Item, acc: XtreamAccount) {
         when (kind) {
-            "live" -> item.id.toIntOrNull()?.let { share("live", acc.liveUrl(it), item.name) }
+            "live" -> item.id.toIntOrNull()?.let {
+                share("live", acc.liveUrl(it), item.name, streamId = it, categoryId = item.data.optString("category_id"))
+            }
             "vod" -> go { showMovie(item) }
             else -> go { showSeries(item) }
         }
@@ -741,7 +743,7 @@ class ShareActivity : Activity() {
 
     // --- compartir ---
 
-    private fun share(kind: String, upstreamUrl: String, title: String) {
+    private fun share(kind: String, upstreamUrl: String, title: String, streamId: Int = 0, categoryId: String = "") {
         if (RoomSession.client == null) { toast("Conecta primero con el servidor y entra en una sala."); return }
         val appContext = applicationContext
         toastShort("Abriendo…")
@@ -751,7 +753,8 @@ class ShareActivity : Activity() {
                 val p = Sharing.prepareUrl(appContext, upstreamUrl, live = kind == "live", title = title)
                 runOnUiThread {
                     Sharing.announce(p)
-                    startActivity(PlayerActivity.intent(this, p.localUrl, p.kind, title, host = true))
+                    startActivity(PlayerActivity.intent(this, p.localUrl, p.kind, title, host = true,
+                        streamId = streamId, categoryId = categoryId))
                 }
             } catch (e: Throwable) {
                 runOnUiThread { toast("No se pudo compartir: ${e.message ?: e.javaClass.simpleName}") }

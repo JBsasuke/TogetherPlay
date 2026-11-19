@@ -13,8 +13,8 @@ android {
         applicationId = "com.juntosplay.app"
         minSdk = 23
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.7.1"
+        versionCode = 10
+        versionName = "0.8.0"
         // Solo ARM (TV y teléfonos): el APK pesa bastante menos.
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") }
     }

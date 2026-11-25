@@ -1,0 +1,8 @@
+<!-- Televisor con antena y base (antes era un rectángulo con ▶ y se parecía al de Series). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="22dp" android:height="22dp"
+    android:viewportWidth="24" android:viewportHeight="24">
+    <path android:strokeColor="#E8EEFF" android:strokeWidth="1.7"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M8,2.5 L12,6 L16,2.5 M3,8 Q3,6 5,6 H19 Q21,6 21,8 V16.5 Q21,18.5 19,18.5 H5 Q3,18.5 3,16.5 Z M9,21.5 H15 M12,18.5 V21.5" />
+</vector>

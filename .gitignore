@@ -1,0 +1,9 @@
+.gradle/
+.idea/
+local.properties
+**/build/
+*.iml
+app/libs/tsbridge.aar
+keystore.properties
+*.jks
+togetherplay.properties
